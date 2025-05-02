@@ -1,0 +1,51 @@
+schemas:
+  common_fields:
+    _id: str
+    type: str
+    profile:
+      username: str
+      password: str
+      telegram_id: int
+    metadata:
+      created_at: datetime
+      updated_at: datetime
+      status: str
+
+  entity:
+    data:
+      owned_plants: List[str]
+      last_login: datetime
+
+  validations:
+    mandatory_fields:
+      root:
+        - _id
+        - type
+      profile:
+        - username
+        - password
+      metadata:
+        - created_at
+        - updated_at
+        - status
+
+    type_constraints:
+      profile.username:
+        type: str
+      profile.password:
+        type: str
+      profile.telegram_id:
+        type: int
+      metadata.status:
+        type: str
+        enum: ["active", "inactive", "suspended"]
+      data.owned_plants:
+        type: List[str]
+      data.last_login:
+        type: datetime
+
+  initialization:
+    metadata:
+      status: "active"
+    data:
+      owned_plants: []

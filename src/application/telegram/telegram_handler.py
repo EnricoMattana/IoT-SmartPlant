@@ -1,0 +1,107 @@
+import asyncio
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ConversationHandler
+from pyngrok import ngrok
+from telegram import Update
+import logging
+
+from src.application.telegram.config.settings import TELEGRAM_TOKEN, NGROK_TOKEN, WEBHOOK_PATH
+from src.application.telegram.handlers.base_handlers import (
+    start_handler, help_handler, echo_handler
+)
+from src.application.telegram.handlers.login_handlers import login_handler, logout_handler, register_handler, create_plant_handler
+from src.application.telegram.routes.webhook_routes import webhook, init_routes
+from src.application.telegram.handlers.plant_handlers import (
+     update_plant_finish, update_plant_ask_field, update_plant_ask_value, update_plant_start,
+     setlocation, recv_location, list_handler,
+    create_plant2_start, create_plant2_ask_name, create_plant2_ask_location, create_plant2_ask_autowater, create_plant2_finish, cancel_create_plant2,
+    universal_fallback)
+
+ASK_PLANT_NAME, ASK_FIELD, ASK_NEW_VALUE = range(3)
+ASK_NEW_PLANT_ID, ASK_NEW_PLANT_NAME, ASK_NEW_LOCATION, ASK_AUTOWATER = range(3, 7)
+
+class TelegramWebhookHandler:
+    def __init__(self, app):
+        self.app = app
+        self.application = None
+        self.loop = None
+        self.webhook_url = None
+
+    def start(self):
+        logging.info("[TelegramWebhook] Starting Telegram bot setup...")
+
+        # Step 1: Event loop setup (required for Flask integration)
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+
+        # Step 2: Initialize bot
+        self.application = Application.builder().token(TELEGRAM_TOKEN).build()
+        self.application.loop = self.loop
+
+        # Step 3: Register command handlers
+        self.setup_handlers()
+
+        # Step 4: Start the bot (prepare webhook mode)
+        self.loop.run_until_complete(self.application.initialize())
+        self.loop.run_until_complete(self.application.start())
+
+        # Step 5: Register Flask webhook routes
+        init_routes(self.application)
+        self.app.register_blueprint(webhook)
+
+        # Step 6: Setup ngrok
+        ngrok.set_auth_token(NGROK_TOKEN)
+        public_url = ngrok.connect(5000).public_url
+        self.webhook_url = f"{public_url}{WEBHOOK_PATH}"
+        print(f"🚀 Telegram Webhook URL: {self.webhook_url}")
+
+        # Step 7: Register webhook URL with Telegram
+        self.loop.run_until_complete(
+            self.application.bot.set_webhook(url=self.webhook_url)
+        )
+
+    def setup_handlers(self):
+
+
+        conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("update_plant", update_plant_start)],
+        states={
+            ASK_PLANT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, update_plant_ask_field)],
+            ASK_FIELD: [MessageHandler(filters.TEXT & ~filters.COMMAND, update_plant_ask_value)],
+            ASK_NEW_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, update_plant_finish)],
+        },
+        fallbacks=[ CommandHandler("cancel", cancel_create_plant2),
+                   MessageHandler(filters.COMMAND, universal_fallback)
+                   ])
+
+        create_plant2_conv = ConversationHandler(
+        entry_points=[CommandHandler("create_plant2", create_plant2_start)],
+        states={
+            ASK_NEW_PLANT_ID:   [MessageHandler(filters.TEXT & ~filters.COMMAND, create_plant2_ask_name)],
+            ASK_NEW_PLANT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_plant2_ask_location)],
+            ASK_NEW_LOCATION:   [MessageHandler(filters.TEXT & ~filters.COMMAND, create_plant2_ask_autowater)],
+            ASK_AUTOWATER:      [MessageHandler(filters.TEXT & ~filters.COMMAND, create_plant2_finish)],
+        },
+        fallbacks=[ 
+            CommandHandler("cancel", cancel_create_plant2),
+            MessageHandler(filters.COMMAND, universal_fallback),
+                   ],
+        allow_reentry=True,
+        per_message=True,)
+        self.application.add_handler(CommandHandler("start", start_handler))
+        self.application.add_handler(CommandHandler("help", help_handler))
+        self.application.add_handler(CommandHandler("login", login_handler))
+        self.application.add_handler(CommandHandler("logout", logout_handler))
+        self.application.add_handler(CommandHandler("register", register_handler))
+        self.application.add_handler(CommandHandler("create_plant",create_plant_handler ))
+        self.application.add_handler(CommandHandler("setlocation",setlocation ))
+        self.application.add_handler(MessageHandler(filters.LOCATION, recv_location))
+        self.application.add_handler(CommandHandler("listplants", list_handler))
+        self.application.add_handler(conv_handler)
+        self.application.add_handler(create_plant2_conv)
+        
+    def stop(self):
+        logging.info("[TelegramWebhook] Stopping Telegram bot...")
+        if self.application and self.loop:
+            self.loop.run_until_complete(self.application.stop())
+            self.loop.run_until_complete(self.application.shutdown())
+            self.loop.close()

@@ -1,0 +1,76 @@
+schemas:
+  common_fields:
+    _id: str
+    type: str
+    profile:
+      name: str
+      owner_id: str
+      description: str
+      species: str
+      outdoor: bool
+      location: str
+    metadata:
+      created_at: datetime
+      updated_at: datetime
+      status: str
+
+  entity:
+    data:
+      measurements: List[Dict]
+
+  validations:
+    mandatory_fields:
+      root:
+        - _id
+        - type
+      profile:
+        - name
+        - owner_id
+        - outdoor
+      metadata:
+        - created_at
+        - updated_at
+
+    type_constraints:
+      _id:
+        type: str
+      type:
+        type: str
+
+      profile:
+        name:
+          type: str
+        owner_id:
+          type: str
+        description:
+          type: str
+        species:
+          type: str
+        location:
+          type: str
+        outdoor:
+          type: bool
+
+      metadata:
+        created_at:
+          type: datetime
+        updated_at:
+          type: datetime
+        status:
+          type: str
+
+      data:
+        measurements:
+          type: List[Dict]
+          item_constraints:
+            required_fields: ["type", "value", "timestamp"]
+            type_mappings:
+              type: str
+              value: float
+              timestamp: datetime
+
+    initialization:
+      metadata:
+        status: "active"
+      data:
+        measurements: []

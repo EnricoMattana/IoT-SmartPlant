@@ -1,0 +1,1 @@
+logged_users = {}  # telegram_id → user_id
