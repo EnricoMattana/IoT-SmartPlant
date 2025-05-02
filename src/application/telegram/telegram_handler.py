@@ -13,11 +13,11 @@ from src.application.telegram.routes.webhook_routes import webhook, init_routes
 from src.application.telegram.handlers.plant_handlers import (
      update_plant_finish, update_plant_ask_field, update_plant_ask_value, update_plant_start,
      setlocation, recv_location, list_handler,
-    create_plant2_start, create_plant2_ask_name, create_plant2_ask_location, create_plant2_ask_autowater, create_plant2_finish, cancel_create_plant2,
+    create_plant2_start, create_plant2_ask_name, create_plant2_ask_city_and_io, parse_city_and_io,create_plant2_finish, cancel_create_plant2,
     universal_fallback)
 
 ASK_PLANT_NAME, ASK_FIELD, ASK_NEW_VALUE = range(3)
-ASK_NEW_PLANT_ID, ASK_NEW_PLANT_NAME, ASK_NEW_LOCATION, ASK_AUTOWATER = range(3, 7)
+ASK_NEW_PLANT_ID, ASK_NEW_PLANT_NAME, ASK_CITY_AND_IO, ASK_AUTOWATER = range(3, 7)
 
 class TelegramWebhookHandler:
     def __init__(self, app):
@@ -74,19 +74,18 @@ class TelegramWebhookHandler:
                    ])
 
         create_plant2_conv = ConversationHandler(
-        entry_points=[CommandHandler("create_plant2", create_plant2_start)],
-        states={
-            ASK_NEW_PLANT_ID:   [MessageHandler(filters.TEXT & ~filters.COMMAND, create_plant2_ask_name)],
-            ASK_NEW_PLANT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_plant2_ask_location)],
-            ASK_NEW_LOCATION:   [MessageHandler(filters.TEXT & ~filters.COMMAND, create_plant2_ask_autowater)],
-            ASK_AUTOWATER:      [MessageHandler(filters.TEXT & ~filters.COMMAND, create_plant2_finish)],
-        },
-        fallbacks=[ 
-            CommandHandler("cancel", cancel_create_plant2),
-            MessageHandler(filters.COMMAND, universal_fallback),
-                   ],
-        allow_reentry=True,
-        per_message=True,)
+            entry_points=[CommandHandler("create_plant2", create_plant2_start)],
+            states={
+                ASK_NEW_PLANT_ID:   [MessageHandler(filters.TEXT & ~filters.COMMAND, create_plant2_ask_name)],
+                ASK_NEW_PLANT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_plant2_ask_city_and_io)],
+                ASK_CITY_AND_IO:    [MessageHandler(filters.TEXT & ~filters.COMMAND, parse_city_and_io)],
+                ASK_AUTOWATER:      [MessageHandler(filters.TEXT & ~filters.COMMAND, create_plant2_finish)],
+            },
+            fallbacks=[ 
+                CommandHandler("cancel", cancel_create_plant2),
+                MessageHandler(filters.COMMAND, universal_fallback),
+            ])
+
         self.application.add_handler(CommandHandler("start", start_handler))
         self.application.add_handler(CommandHandler("help", help_handler))
         self.application.add_handler(CommandHandler("login", login_handler))

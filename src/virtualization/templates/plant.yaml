@@ -9,6 +9,7 @@ schemas:
       species: str
       outdoor: bool
       location: str
+      auto_watering: bool
     metadata:
       created_at: datetime
       updated_at: datetime
@@ -27,6 +28,7 @@ schemas:
         - name
         - owner_id
         - outdoor
+        - auto_watering
       metadata:
         - created_at
         - updated_at
@@ -49,6 +51,8 @@ schemas:
         location:
           type: str
         outdoor:
+          type: bool
+        auto_watering:
           type: bool
 
       metadata:

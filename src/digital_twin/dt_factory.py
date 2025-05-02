@@ -78,8 +78,8 @@ class DTFactory:
         Returns a mapping of service names to their module paths
         """
         return {
-            "AggregationService": "src.services.analytics",
-            "TemperaturePredictionService": "src.services.TemperaturePredictionService",
+            "WeatherForecastService": "src.services.plant_service",
+            "AutoWateringService": "src.services.plant_service",
         }
 
     def add_service(
@@ -252,32 +252,32 @@ class DTFactory:
     #     except Exception as e:
     #         raise Exception(f"Failed to remove Digital Replica: {str(e)}")
 
-    # def remove_service(self, dt_id: str, service_name: str) -> None:
-    #     """
-    #     Remove a service reference from a Digital Twin
-    #
-    #     Args:
-    #         dt_id: Digital Twin ID
-    #         service_name: Name of the service to remove
-    #     """
-    #     try:
-    #         dt_collection = self.db_service.db["digital_twins"]
-    #
-    #         dt_collection.update_one(
-    #             {"_id": dt_id},
-    #             {
-    #                 "$pull": {
-    #                     "services": {
-    #                         "name": service_name
-    #                     }
-    #                 },
-    #                 "$set": {
-    #                     "metadata.updated_at": datetime.utcnow()
-    #                 }
-    #             }
-    #         )
-    #     except Exception as e:
-    #         raise Exception(f"Failed to remove service: {str(e)}")
+    def remove_service(self, dt_id: str, service_name: str) -> None:
+        """
+        Remove a service reference from a Digital Twin
+
+        Args:
+            dt_id: Digital Twin ID
+            service_name: Name of the service to remove
+        """
+        try:
+            dt_collection = self.db_service.db["digital_twins"]
+
+            dt_collection.update_one(
+                {"_id": dt_id},
+                {
+                    "$pull": {
+                        "services": {
+                            "name": service_name
+                        }
+                    },
+                    "$set": {
+                        "metadata.updated_at": datetime.utcnow()
+                    }
+                }
+            )
+        except Exception as e:
+            raise Exception(f"Failed to remove service: {str(e)}")
 
     def _init_dt_collection(self) -> None:
         """Initialize the Digital Twin collection in MongoDB"""
