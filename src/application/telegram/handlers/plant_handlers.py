@@ -21,15 +21,16 @@ async def update_plant_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     db = current_app.config['DB_SERVICE']
 
     # 1️⃣  Build the mapping: plant_name (normalised) → plant_id
-    plant_dict = get_user_plants(db, update.effective_user.id)
+    plant_dict, pretty_dict= get_user_plants(db, update.effective_user.id)
     context.user_data["plant_dict"] = plant_dict
 
+    print(pretty_dict)
     # 2️⃣  Build a pretty list of names for the reply
     if not plant_dict:
         await update.message.reply_text("ℹ️ Non hai ancora registrato nessuna pianta.")
         return ConversationHandler.END
 
-    names_list = "\n".join(f"- {name}" for name in plant_dict.keys())
+    names_list = "\n".join(f"- {name}" for name in pretty_dict.keys())
 
     # 3️⃣  Ask which plant the user wants to update
     await update.message.reply_text(
@@ -37,8 +38,6 @@ async def update_plant_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "Qual è il *nome* della pianta che vuoi aggiornare?",
         parse_mode="Markdown",
     )
-
-    return ASK_PLANT_NAME
 
     return ASK_PLANT_NAME
 
@@ -313,6 +312,7 @@ async def universal_fallback(update, context):
 
 
 def get_user_plants(db, telegram_id):
+
     """
     Return a dict that maps each plant *name* (lower‑cased, stripped)
     to its unique plant *ID* for the given Telegram user.
@@ -337,7 +337,12 @@ def get_user_plants(db, telegram_id):
         name = plant["profile"].get("name", "Unnamed Plant").lower().strip()
         plant_dict[name] = plant["_id"]
 
-    return plant_dict
+    pretty_dict = {}
+    for plant in plants:
+        name = plant["profile"].get("name", "Unnamed Plant")
+        pretty_dict[name] = plant["_id"]
+    
+    return plant_dict, pretty_dict
 
 
 

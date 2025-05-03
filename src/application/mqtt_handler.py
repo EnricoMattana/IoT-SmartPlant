@@ -14,7 +14,7 @@ class SmartPlantMQTTHandler:
         self.app = app
         #client_id = f"smartplant_{uuid.uuid4()}"
         client_id=f"SmartPlant_Backend"
-        self.client = mqtt.Client(client_id=client_id)
+        self.client = mqtt.Client(client_id=client_id, clean_session=True)
 
         # Bind MQTT events
         self.client.on_connect = self._on_connect
@@ -102,6 +102,7 @@ class SmartPlantMQTTHandler:
         if rc == 0:
             self.connected = True
             logger.info("Connected to MQTT broker")
+            print("Connected to MQTT broker")
             # Subscribe to topic
             client.subscribe(self.topic)
             logger.info(f"Subscribed to {self.topic}")

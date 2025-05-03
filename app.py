@@ -79,9 +79,9 @@ class FlaskServer:
 
 
 MQTT_CONFIG = {
-    "broker": "c665848c823e452eb211da0178af23f2.s1.eu.hivemq.cloud",
+    "broker": "2cf8c9d8d17f48c3a7c23442276b3ce4.s1.eu.hivemq.cloud",
     "port": 8883,
-    "username": "smartplant-broker",
+    "username": "smartplant-backend",
     "password": "IoTPlant2025",
     "topic": "smartplant/+/+/measurements"
 }
