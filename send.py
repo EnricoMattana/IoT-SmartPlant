@@ -29,7 +29,7 @@ def on_connect(client, userdata, flags, rc):
         }
     ]
 
-    client.publish("smartplant/74157967-9d88-4231-8f8f-fd529d702ed4/0283837227633993/measurements", payload= json.dumps(payload1), retain=True)
+    client.publish("smartplant/1/measurements", payload= json.dumps(payload1), retain=True)
     print("📤 Message published")
 
 client.on_connect = on_connect
