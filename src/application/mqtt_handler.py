@@ -6,6 +6,8 @@ import logging
 import time
 from threading import Thread, Event
 import uuid
+from src.application.utils import check_humidity_threshold
+
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +144,7 @@ class SmartPlantMQTTHandler:
             with self.app.app_context():
                 for m in measurements:
                     self._add_measurement(plant_id, m)
-
+            
         except Exception as e:
             logger.error(f"Error processing incoming MQTT message: {e}")
 
@@ -163,17 +165,11 @@ class SmartPlantMQTTHandler:
             plant["data"]["measurements"].append(measurement)
             plant["metadata"]["updated_at"] = datetime.utcnow()
 
-            db_service.update_dr("plant", plant_id, {
-                "data": {
-                    "measurements": plant["data"]["measurements"]
-                },
-                "metadata": {
-                    "updated_at": plant["metadata"]["updated_at"]
-                }
-            })
+            db_service.update_dr("plant", plant_id, plant)
 
             logger.info(f"Measurement added to plant {plant_id}")
 
+            check_humidity_threshold(plant_id, measurement, plant, db_service)
         except Exception as e:
             logger.error(f"Error updating plant {plant_id}: {e}")
 

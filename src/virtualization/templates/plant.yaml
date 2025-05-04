@@ -14,6 +14,7 @@ schemas:
       created_at: datetime
       updated_at: datetime
       status: str
+      last_warning_ts: str
 
   entity:
     data:
@@ -62,6 +63,8 @@ schemas:
           type: datetime
         status:
           type: str
+        last_warning_ts:
+          type: datetime
 
       data:
         measurements:
@@ -76,5 +79,6 @@ schemas:
     initialization:
       metadata:
         status: "active"
+        last_warning_ts: null
       data:
         measurements: []

@@ -16,6 +16,7 @@ from src.application.telegram.handlers.plant_handlers import (
     create_plant2_start, create_plant2_ask_name, create_plant2_ask_city_and_io, parse_city_and_io,create_plant2_finish, cancel_create_plant2,
     universal_fallback)
 
+from src.application.telegram.handlers.command_handlers import calibrate_dry_handler, calibrate_wet_handler, water_handler
 ASK_PLANT_NAME, ASK_FIELD, ASK_NEW_VALUE = range(3)
 ASK_NEW_PLANT_ID, ASK_NEW_PLANT_NAME, ASK_CITY_AND_IO, ASK_AUTOWATER = range(3, 7)
 
@@ -35,8 +36,10 @@ class TelegramWebhookHandler:
 
         # Step 2: Initialize bot
         self.application = Application.builder().token(TELEGRAM_TOKEN).build()
-        self.application.loop = self.loop
+        self.app.config["TELEGRAM_BOT"] = self.application.bot
 
+        self.application.loop = self.loop
+        self.app.config["TELEGRAM_LOOP"] = self.loop    
         # Step 3: Register command handlers
         self.setup_handlers()
 
@@ -95,6 +98,11 @@ class TelegramWebhookHandler:
         self.application.add_handler(CommandHandler("setlocation",setlocation ))
         self.application.add_handler(MessageHandler(filters.LOCATION, recv_location))
         self.application.add_handler(CommandHandler("listplants", list_handler))
+        self.application.add_handler(CommandHandler("calibrate_dry", calibrate_dry_handler))
+        self.application.add_handler(CommandHandler("calibrate_wet", calibrate_wet_handler))
+        self.application.add_handler(CommandHandler("water", water_handler))
+
+
         self.application.add_handler(conv_handler)
         self.application.add_handler(create_plant2_conv)
         
