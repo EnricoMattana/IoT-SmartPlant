@@ -119,25 +119,24 @@ async def update_plant_finish(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 async def list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    telegram_id=update.effective_user.id
+    telegram_id = update.effective_user.id
     if not is_authenticated(telegram_id):
         await update.message.reply_text("❌ Devi prima fare il login.")
         return
 
     db = current_app.config['DB_SERVICE']
-    plant_ids, plant_names = get_user_plants(db, telegram_id)  # già lista di nomi
-    
-    if not plant_names:
+    _, pretty_dict = get_user_plants(db, telegram_id)  # usa il secondo dizionario, quello con i nomi originali
+
+    if not pretty_dict:
         await update.message.reply_text("ℹ️ Non hai ancora registrato nessuna pianta.")
         return
 
-    names_list = "\n".join(f"- {name}" for name in plant_names)
+    names_list = "\n".join(f"- {name}" for name in pretty_dict.keys())
 
     await update.message.reply_text(
-        f"🪴 Here's the list of your plants!:\n{names_list}\n\nWhich plant do you wish to update?",
+        f"🪴 Ecco la lista delle tue piante:\n{names_list}",
         parse_mode="Markdown"
     )
-
 
 
 # ──────────────────────────────────────────────────────────────
@@ -452,3 +451,58 @@ async def sync_dt_with_plant_update(plant: dict, plant_id: str, send_msg: Callab
                     await send_msg(f"⚠️ Errore durante la sincronizzazione DT: {str(e)}")
 
                 return  # trovato e gestito il DT
+
+
+
+async def delete_plant_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    telegram_id = update.effective_user.id
+    if not is_authenticated(telegram_id):
+        await update.message.reply_text("❌ Devi prima fare il login.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("📛 Devi scrivere il nome della pianta da eliminare.\nEsempio: `/delete_plant basilico`", parse_mode="Markdown")
+        return
+
+    plant_name_input = " ".join(context.args).lower().strip()
+
+    db = current_app.config['DB_SERVICE']
+    dt_factory = current_app.config['DT_FACTORY']
+    plant_dict, _ = get_user_plants(db, telegram_id)
+    plant_id = plant_dict.get(plant_name_input)
+
+    if not plant_id:
+        await update.message.reply_text(f"❌ Pianta '{plant_name_input}' non trovata tra le tue.")
+        return
+
+    # 1️⃣ Elimina il Digital Twin associato
+    try:
+        dts = dt_factory.list_dts()
+        for dt in dts:
+            for dr in dt.get("digital_replicas", []):
+                if dr["type"] == "plant" and dr["id"] == plant_id:
+                    dt_id = dt["_id"]
+                    dt_collection = db.db["digital_twins"]
+                    dt_collection.delete_one({"_id": dt_id})
+                    break
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Errore nella rimozione del Digital Twin: {str(e)}")
+
+    # 2️⃣ Elimina la DR della pianta
+    try:
+        db.delete_dr("plant", plant_id)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Errore nella cancellazione della pianta: {str(e)}")
+        return
+
+    # 3️⃣ Rimuovi l'ID dalla lista dell'utente
+    try:
+        user = get_logged_user(telegram_id)
+        if user and plant_id in user["data"].get("owned_plants", []):
+            user["data"]["owned_plants"].remove(plant_id)
+            db.update_dr("user", user["_id"], user)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Pianta cancellata ma errore nella sincronizzazione utente: {str(e)}")
+        return
+
+    await update.message.reply_text(f"🗑️ Pianta *{plant_name_input}* eliminata con successo.", parse_mode="Markdown")

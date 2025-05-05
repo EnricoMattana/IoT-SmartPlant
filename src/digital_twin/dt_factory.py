@@ -168,6 +168,17 @@ class DTFactory:
     #     except Exception as e:
     #         raise Exception(f"Failed to get Digital Twin: {str(e)}")
 
+    def get_dt_by_plant_id(self, plant_id: str) -> Optional[Dict]:
+        dt_collection = self.db_service.db["digital_twins"]
+        return dt_collection.find_one({
+            "digital_replicas": {
+                "$elemMatch": {
+                    "type": "plant",
+                    "id": plant_id
+                }
+            }
+        })
+
     def list_dts(self) -> List[Dict]:
         """
         List all Digital Twins

@@ -118,5 +118,6 @@ async def send_humidity_alert_to_user(telegram_id: int, plant_name: str, humidit
         )
         await bot.send_message(chat_id=telegram_id, text=message, parse_mode="Markdown")  # ✅ await obbligatorio
         logger.info(f"✅ Notifica Telegram inviata a {telegram_id} per {plant_name}")
+        print("Il telegram ID è", telegram_id)
     except Exception as e:
         logger.error(f"❌ Errore durante invio notifica Telegram: {e}")

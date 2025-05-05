@@ -8,13 +8,13 @@ from src.application.telegram.config.settings import TELEGRAM_TOKEN, NGROK_TOKEN
 from src.application.telegram.handlers.base_handlers import (
     start_handler, help_handler, echo_handler
 )
-from src.application.telegram.handlers.login_handlers import login_handler, logout_handler, register_handler, create_plant_handler
+from src.application.telegram.handlers.login_handlers import login_handler, logout_handler, register_handler
 from src.application.telegram.routes.webhook_routes import webhook, init_routes
 from src.application.telegram.handlers.plant_handlers import (
      update_plant_finish, update_plant_ask_field, update_plant_ask_value, update_plant_start,
      setlocation, recv_location, list_handler,
     create_plant2_start, create_plant2_ask_name, create_plant2_ask_city_and_io, parse_city_and_io,create_plant2_finish, cancel_create_plant2,
-    universal_fallback)
+    universal_fallback, delete_plant_handler)
 
 from src.application.telegram.handlers.command_handlers import calibrate_dry_handler, calibrate_wet_handler, water_handler
 ASK_PLANT_NAME, ASK_FIELD, ASK_NEW_VALUE = range(3)
@@ -82,7 +82,7 @@ class TelegramWebhookHandler:
                    ])
 
         create_plant2_conv = ConversationHandler(
-            entry_points=[CommandHandler("create_plant2", create_plant2_start)],
+            entry_points=[CommandHandler("create_plant", create_plant2_start)],
             states={
                 ASK_NEW_PLANT_ID:   [MessageHandler(filters.TEXT & ~filters.COMMAND, create_plant2_ask_name)],
                 ASK_NEW_PLANT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_plant2_ask_city_and_io)],
@@ -99,7 +99,7 @@ class TelegramWebhookHandler:
         self.application.add_handler(CommandHandler("login", login_handler))
         self.application.add_handler(CommandHandler("logout", logout_handler))
         self.application.add_handler(CommandHandler("register", register_handler))
-        self.application.add_handler(CommandHandler("create_plant",create_plant_handler ))
+        self.application.add_handler(CommandHandler("delete_plant", delete_plant_handler))
         self.application.add_handler(CommandHandler("setlocation",setlocation ))
         self.application.add_handler(MessageHandler(filters.LOCATION, recv_location))
         self.application.add_handler(CommandHandler("listplants", list_handler))
