@@ -36,10 +36,10 @@ class TelegramWebhookHandler:
 
         # Step 2: Initialize bot
         self.application = Application.builder().token(TELEGRAM_TOKEN).build()
+        self.application.loop = self.loop
         self.app.config["TELEGRAM_BOT"] = self.application.bot
 
-        self.application.loop = self.loop
-        self.app.config["TELEGRAM_LOOP"] = self.loop    
+
         # Step 3: Register command handlers
         self.setup_handlers()
 
@@ -61,6 +61,11 @@ class TelegramWebhookHandler:
         self.loop.run_until_complete(
             self.application.bot.set_webhook(url=self.webhook_url)
         )
+        self.application.telegram_loop = asyncio.new_event_loop()
+        self.app.config["TELEGRAM_LOOP"] = self.application.telegram_loop
+        import threading
+        threading.Thread(target=self.application.telegram_loop.run_forever, daemon=True).start()
+        print(f"🚀 Loop Telegram INSIDE attivo? {self.application.telegram_loop.is_running()}")
 
     def setup_handlers(self):
 
@@ -111,4 +116,6 @@ class TelegramWebhookHandler:
         if self.application and self.loop:
             self.loop.run_until_complete(self.application.stop())
             self.loop.run_until_complete(self.application.shutdown())
+            self.application.telegram_loop.stop()
             self.loop.close()
+

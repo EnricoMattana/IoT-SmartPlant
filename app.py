@@ -5,7 +5,7 @@ from src.services.database_service import DatabaseService
 from src.digital_twin.dt_factory import DTFactory
 from src.application.api import register_api_blueprints
 from config.config_loader import ConfigLoader
-
+import asyncio
 from src.application.SmartPlant_apis import register_smartplant_blueprint
 from src.application.api import register_api_blueprints 
 from src.application.mqtt_handler import SmartPlantMQTTHandler
@@ -25,6 +25,8 @@ class FlaskServer:
         self._init_components()
         self._register_blueprints()
         self.telegram_handler = TelegramWebhookHandler(self.app)
+        #self.telegram_loop = asyncio.new_event_loop()
+        #self.app.config["TELEGRAM_LOOP"] = self.telegram_loop
         self.app.config['MQTT_CONFIG'] = MQTT_CONFIG
         self.mqtt_handler = SmartPlantMQTTHandler(self.app)
         self.app.config['MQTT_HANDLER'] = self.mqtt_handler
@@ -69,26 +71,29 @@ class FlaskServer:
     def run(self, host="0.0.0.0", port=5000, debug=False):
         """Run the Flask server"""
         try:
+            #import threading
+            #threading.Thread(target=self.telegram_loop.run_forever, daemon=True).start()
             self.telegram_handler.start() 
-            print(f"🚀 Loop Telegram attivo? {self.telegram_handler.loop.is_running()}")
+            #print(f"🚀 Loop Telegram attivo? {self.telegram_loop.is_running()}")
 
             self.mqtt_handler.start()  # ← Start MQTT BEFORE app.run()
-            
+            #print(f"🚀 Loop Telegram attivo? {self.telegram_loop.is_running()}")
+
             self.app.run(host=host, port=port, debug=debug)
         finally:
             if "DB_SERVICE" in self.app.config:
                 self.app.config["DB_SERVICE"].disconnect()
             self.mqtt_handler.stop()  # ← Clean shutdown
-            self.telegram_handler.stop() 
-
+            self.telegram_handler.stop()
+            #self.telegram_loop.stop()
 
 MQTT_CONFIG = {
     "broker": "2cf8c9d8d17f48c3a7c23442276b3ce4.s1.eu.hivemq.cloud",
     "port": 8883,
     "username": "smartplant-backend",
     "password": "IoTPlant2025",
-    "topic": "smartplant/+/measurements"
-}
+    "topic": "smartplant/+/measurement"
+} 
 
 WeatherAPI="05418e63cb684a3a8f2135050250205"
 if __name__ == "__main__":

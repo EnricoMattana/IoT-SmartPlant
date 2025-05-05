@@ -4,6 +4,7 @@ from src.application.telegram.handlers.command_handlers import send_humidity_ale
 from src.application.telegram.handlers.login_handlers import is_authenticated, get_logged_user
 from datetime import datetime, timedelta
 from typing import Optional
+from telegram import Bot
 import logging
 import asyncio
 from flask import current_app
@@ -67,7 +68,8 @@ def check_humidity_threshold(plant_id: str, measurement: dict, plant: dict, db_s
     owner_id = plant.get("profile", {}).get("owner_id")
     user = db_service.get_dr("user", owner_id)
     telegram_id = user.get("profile", {}).get("telegram_id")
-    
+    bot = current_app.config["TELEGRAM_BOT"]
+    bot.send_message(chat_id=telegram_id, text="Test notifica diretta")
 
    
     if not owner_id:
