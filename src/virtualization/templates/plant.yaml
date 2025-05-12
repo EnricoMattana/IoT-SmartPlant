@@ -6,7 +6,6 @@ schemas:
       name: str
       owner_id: str
       description: str
-      species: str
       outdoor: bool
       location: str
       auto_watering: bool
@@ -15,6 +14,7 @@ schemas:
       updated_at: datetime
       status: str
       last_warning_ts: str
+      auto_watering_status: Dict
 
   entity:
     data:
@@ -29,11 +29,11 @@ schemas:
         - name
         - owner_id
         - outdoor
+        - location
         - auto_watering
       metadata:
         - created_at
         - updated_at
-
     type_constraints:
       _id:
         type: str
@@ -46,8 +46,6 @@ schemas:
         owner_id:
           type: str
         description:
-          type: str
-        species:
           type: str
         location:
           type: str
@@ -65,6 +63,15 @@ schemas:
           type: str
         last_warning_ts:
           type: datetime
+        auto_watering_status:
+          type: Dict
+          item_constraints:
+            required_fields: ["last_block", "last_water", "consec_failed", "consec_water"]
+            type_mappings:
+              last_block: str
+              last_water: datetime
+              consec_failed: int
+              consec_water: int
 
       data:
         measurements:
@@ -80,5 +87,10 @@ schemas:
       metadata:
         status: "active"
         last_warning_ts: null
+        auto_watering_status:
+          last_block: null
+          last_water: null
+          consec_failed: 0
+          consec_water: 0
       data:
         measurements: []

@@ -15,8 +15,7 @@ from src.application.telegram.handlers.plant_handlers import (
      setlocation, recv_location, list_handler,
     create_plant2_start, create_plant2_ask_name, create_plant2_ask_city_and_io, parse_city_and_io,create_plant2_finish, cancel_create_plant2,
     universal_fallback, delete_plant_handler)
-
-from src.application.telegram.handlers.command_handlers import calibrate_dry_handler, calibrate_wet_handler, water_handler
+from src.application.telegram.handlers.command_handlers import calibrate_dry_handler, calibrate_wet_handler, water_handler, analytics_handler
 ASK_PLANT_NAME, ASK_FIELD, ASK_NEW_VALUE = range(3)
 ASK_NEW_PLANT_ID, ASK_NEW_PLANT_NAME, ASK_CITY_AND_IO, ASK_AUTOWATER = range(3, 7)
 
@@ -95,6 +94,7 @@ class TelegramWebhookHandler:
             ])
 
         self.application.add_handler(CommandHandler("start", start_handler))
+        self.application.add_handler(CommandHandler("analytics", analytics_handler))
         self.application.add_handler(CommandHandler("help", help_handler))
         self.application.add_handler(CommandHandler("login", login_handler))
         self.application.add_handler(CommandHandler("logout", logout_handler))

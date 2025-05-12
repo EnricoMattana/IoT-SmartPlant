@@ -39,8 +39,7 @@ def is_cooldown_passed(last_ts: Optional[str], cooldown_minutes: int = 10) -> bo
     if not last_ts:
         return True
     try:
-        last = datetime.fromisoformat(last_ts)
-        return datetime.utcnow() - last > timedelta(minutes=cooldown_minutes)
+        return datetime.utcnow() - last_ts > timedelta(minutes=cooldown_minutes)
     except Exception as e:
         logger.warning(f"Invalid last_warning_ts format: {e}")
         return True
@@ -55,11 +54,6 @@ def check_humidity_threshold(plant_id: str, measurement: dict, plant: dict, db_s
     if humidity >= threshold:
         return
 
-    last_ts = get_last_warning_ts(plant)
-    if not is_cooldown_passed(last_ts, cooldown_minutes=5):
-        logger.info(f"No alert for {plant_id}: cooldown not passed")
-        return
-
     dt_factory = current_app.config["DT_FACTORY"]
     dt = dt_factory.get_dt_by_plant_id(plant_id)
 
@@ -72,10 +66,18 @@ def check_humidity_threshold(plant_id: str, measurement: dict, plant: dict, db_s
     if "AutoWateringService" not in services:
         _handle_no_autowatering(plant_id, humidity, plant, db_service)
     else:
-        _handle_autowatering(plant_id, humidity, plant, dt, db_service)
+        
+        _handle_autowatering(plant_id, measurement, plant, dt, db_service)
 
 
 def _handle_no_autowatering(plant_id, humidity, plant, db_service):
+    last_ts = ensure_datetime(get_last_warning_ts(plant))
+
+    print(type(last_ts))
+    if not is_cooldown_passed(last_ts, cooldown_minutes=15):
+        logger.info(f"No alert for {plant_id}: cooldown not passed")
+        return
+    
     owner_id = plant.get("profile", {}).get("owner_id")
     if not owner_id:
         logger.warning(f"Nessun owner_id associato a {plant_id}")
@@ -103,18 +105,27 @@ def _handle_no_autowatering(plant_id, humidity, plant, db_service):
     logger.info(f"🌱 ALERT inviato per {plant_id} → humidity {humidity}%")
 
 
-def _handle_autowatering(plant_id, humidity, plant, dt, db_service):
-    location = plant.get("profile", {}).get("location", "").lower()
+def _handle_autowatering(plant_id, measurement, plant, dt, db_service):
+    sensor_settling_time=5
+    last_water=plant.get("metadata", {}).get("auto_watering_status", {}).get("last_water")
+    measurement_time=ensure_datetime(measurement["timestamp"])
+    outdoor = plant.get("profile", {}).get("outdoor", False)
 
-    if location == "indoor":
-        # 🌊 Invia comando MQTT diretto
-        mqtt_handler = current_app.config["MQTT_HANDLER"]
-        topic = f"smartplant/{plant_id}/commands"
-        mqtt_handler.publish(topic, "water")
+    if last_water and measurement_time:
+        if (measurement_time - last_water) < timedelta(minutes=sensor_settling_time):
+            logger.info(f"⏳ Ignoro misura: meno di {sensor_settling_time} minuti dall'ultima irrigazione")
+            return
+    
 
-        logger.info(f"💧 AutoWatering (indoor): comando water inviato per {plant_id}")
-        update_last_warning_ts(db_service, plant_id)
-    else:
-        # ☁️ Outdoor: demandiamo a WeatherForecast (seconda parte)
-        logger.info(f"🌦️ Outdoor + AutoWatering: gestione demandata a WeatherForecastService per {plant_id}")
-
+def ensure_datetime(ts: str | datetime | None) -> datetime | None:
+    if ts is None:
+        return None
+        
+    if isinstance(ts, datetime):
+        return ts
+        
+    try:
+        return datetime.fromisoformat(ts.rstrip('Z'))
+    except Exception as e:
+        logger.warning(f"Invalid timestamp format: {ts} ({e})")
+        return None

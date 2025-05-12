@@ -1,8 +1,11 @@
 import requests
 from datetime import datetime, timedelta
 from typing import Dict, Any
+from dateutil import parser  # Manca questo import!
 from .base import BaseService 
 
+FORECAST_COOLDOWN_HR = 24  # default: 24 ore
+FAIL_TOLERANCE = 3        # default: 3 tentativi
 
 
 class WeatherForecastService(BaseService):
@@ -52,47 +55,83 @@ class WeatherForecastService(BaseService):
 
 
 
+
 class AutoWateringService(BaseService):
+    """Decision engine for automatic irrigation."""
+
     def __init__(self):
         super().__init__()
         self.name = "AutoWateringService"
-        self.weather_service = WeatherForecastService()
 
     def configure(self, config: Dict[str, Any]):
-        # Se vuoi passare la stessa config anche al weather_service
-        self.weather_service.configure(config)
+        global FORECAST_COOLDOWN_HR, FAIL_TOLERANCE
+        FORECAST_COOLDOWN_HR = config.get("forecast_cd_hr", FORECAST_COOLDOWN_HR)
+        FAIL_TOLERANCE       = config.get("fail_tolerance", FAIL_TOLERANCE)
 
-    def execute(self, data: Dict, dr_type: str = None, attribute: str = None) -> Dict[str, Any]:
-        profile = data.get("profile", {})
-        
-        if not profile.get("auto_watering", False):
-            return {
-                "status": "ok",
-                "decision": "skip",
-                "reason": "auto_watering_disabled"
-            }
+    def execute(self, data: Dict, context: Dict[str, Any]) -> tuple[str, str]:
 
-        location = profile.get("location", "indoor").lower()
+        db       = context["db"]
+        forecast = context.get("weather_result")
+        now      = datetime.utcnow()
 
-        if location == "indoor":
-            return {
-                "status": "ok",
-                "decision": "water",
-                "reason": "indoor_location"
-            }
+        profile  = data.get("profile", {})
+        metadata = data.get("metadata", {}).copy()
+        autow    = metadata.get("auto_watering_status", {}).copy()
+        plant_id = data.get("_id", "unknown")
 
-        weather_result = self.weather_service.execute(data)
+        last_block = autow.get("last_block")
+        last_water = autow.get("last_water")
+        forecast_blocked = last_block and (
+            now - last_block < timedelta(hours=FORECAST_COOLDOWN_HR))
 
-        if weather_result.get("status") != "ok":
-            return {
-                "status": "error",
-                "reason": "weather_service_failed",
-                "details": weather_result
-            }
+        consec_failed = autow.get("consec_fai9led", 0)
+        reset_failed = now - last_water < timedelta(minutes=5)
 
-        return {
-            "status": "ok",
-            "decision": weather_result["decision"],
-            "weather": weather_result
-        }
+
+        # ─── FAIL‑TOLERANCE GLOBALE (vale indoor & outdoor) ────────────
+        if consec_failed >= FAIL_TOLERANCE:
+            return "notification", "possible_irrigation_failure"
+
+        is_outdoor = profile.get("outdoor", False)
+
+        # ─── INDOOR ────────────────────────────────────────────────────
+        if not is_outdoor:
+            self._save_action(db, plant_id, metadata, autow, now, reset_failed)
+            return "water", "indoor"
+
+        # ─── OUTDOOR ───────────────────────────────────────────────────
+        if forecast_blocked:
+            return "no_water", "forecast_cooldown"
+        if not forecast or forecast.get("status") != "ok":
+            return "notification", "weather_service_failed"
+        if forecast["decision"] == "skip":
+            autow["last_block"] = now  # salviamo direttamente datetime
+            self._persist_metadata(db, plant_id, metadata | {"autowatering": autow})
+            return "no_water", "weather_block"
+
+        # forecast == water
+        self._save_action(db, plant_id, metadata, autow, now, reset_failed)
+        return "water", "weather_allowed"
+
+    # helpers -----------------------------------------------------------
+    def _iso(self, dt: datetime) -> str:
+        return dt.replace(microsecond=0).isoformat()
+
+    def _save_action(self, db, plant_id, metadata, autow, when: datetime, reset_failed: bool):
+        autow["last_water"] = when  # salviamo direttamente datetime
+        autow["consecutive_watering"] = autow.get("consecutive_watering", 0) + 1
+        if reset_failed:
+            autow["consecutive_failed_irrigations"] = 0
+        metadata["autowatering"] = autow
+        self._persist_metadata(db, plant_id, metadata)
+
+    def _persist_metadata(self, db, plant_id, new_md):
+        plant = db.get_dr("plant", plant_id)
+        if not plant:
+            return
+        plant["metadata"] = plant.get("metadata", {}) | new_md
+        db.update_dr("plant", plant_id, plant)
+
+
+
 
