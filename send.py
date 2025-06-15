@@ -19,7 +19,7 @@ def on_connect(client, userdata, flags, rc):
     payload1 = [
         {
             "type": "humidity",
-            "value": 18.5,
+            "value": 10,
             "timestamp": timestamp
         },
         {
@@ -29,7 +29,7 @@ def on_connect(client, userdata, flags, rc):
         }
     ]
 
-    client.publish("smartplant/PL0/measurement", payload= json.dumps(payload1), retain=False)
+    client.publish("smartplant/PL2/measurement", payload= json.dumps(payload1), retain=False)
     print("📤 Message published")
 
 client.on_connect = on_connect

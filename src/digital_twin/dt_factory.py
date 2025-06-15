@@ -78,8 +78,7 @@ class DTFactory:
         Returns a mapping of service names to their module paths
         """
         return {
-            "WeatherForecastService": "src.services.plant_service",
-            "AutoWateringService": "src.services.plant_service",
+            "WateringManagement": "src.services.plant_service",
         }
 
     def add_service(

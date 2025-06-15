@@ -247,7 +247,7 @@ async def create_plant2_finish(update, context):
         await update.message.reply_text("Errore interno: utente non trovato.")
         return ConversationHandler.END
 
-    dr_factory = DRFactory("src/virtualization/templates/plant.yaml")
+    dr_factory = current_app.config['DR_FACTORY']
     new_plant = dr_factory.create_dr("plant", {
         "profile": {
             "name":          plant_name,
@@ -268,19 +268,17 @@ async def create_plant2_finish(update, context):
     user["data"].setdefault("owned_plants", []).append(plant_id)
     db.update_dr("user", user["_id"], user)
 
-    # --- DIGITAL TWIN & SERVICES ------------------------------------------
+   # 🧠 Crea Digital Twin + servizio WateringManagement
     dt_factory = current_app.config['DT_FACTORY']
-    dt_name = f"DT_plant_{plant_id}"
-    dt_id = dt_factory.create_dt(name=dt_name)
-
+    dt_id = dt_factory.create_dt(name=f"DT_plant_{plant_id}")
     dt_factory.add_digital_replica(dt_id=dt_id, dr_type="plant", dr_id=plant_id)
 
-    # add services according to profile
-    if outdoor:
-        dt_factory.add_service(dt_id, "WeatherForecastService",
-                               {"location": location})   # pass city
-    if autowater:
-        dt_factory.add_service(dt_id, "AutoWateringService")
+    # ➕ Aggiungi sempre WateringManagement con config base
+    config = {
+        "api_key": "05418e63cb684a3a8f2135050250205",
+        "location": location
+    }
+    dt_factory.add_service(dt_id, "WateringManagement", config)
 
     await update.message.reply_text("✅ Pianta creata con successo!")
     return ConversationHandler.END
@@ -367,91 +365,44 @@ async def recv_location(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def sync_dt_with_plant_update(plant: dict, plant_id: str, send_msg: Callable):
     """
-    Sincronizza i servizi del DT associato a una pianta, in base a:
-    - outdoor: aggiunge/rimuove WeatherForecastService
-    - location: aggiorna il servizio se outdoor resta True ma cambia
-    - auto_watering: aggiunge/rimuove AutoWateringService
+    Aggiorna solo il campo 'location' del servizio WateringManagement
+    mantenendo inalterati gli altri parametri (es. soglie).
 
     Args:
-        plant: dict aggiornato della pianta (DR)
+        plant: DR aggiornato
         plant_id: ID della pianta
-        send_msg: funzione async per inviare messaggi Telegram all’utente
+        send_msg: funzione async per rispondere via Telegram
     """
     from flask import current_app
-    dt_factory = current_app.config['DT_FACTORY']
-    dts = dt_factory.list_dts()
+    dt_factory = current_app.config["DT_FACTORY"]
 
+    dts = dt_factory.list_dts()
     for dt_data in dts:
         for dr_ref in dt_data.get("digital_replicas", []):
             if dr_ref["id"] == plant_id and dr_ref["type"] == "plant":
                 dt_id = dt_data["_id"]
                 try:
-                    dt_instance = dt_factory.get_dt_instance(dt_id)
-                    services = dt_instance.list_services()
+                    dt = dt_factory.get_dt(dt_id)
+                    services = dt.get("services", [])
+                    old_config = {}
 
-                    outdoor = plant["profile"].get("outdoor", False)
-                    auto_watering = plant["profile"].get("auto_watering", False)
-                    new_location = plant["profile"].get("location", "Milan")
+                    for s in services:
+                        if s["name"] == "WateringManagement":
+                            old_config = s.get("config", {})
+                            break
 
-                    added, removed, updated = [], [], []
+                    # 🔁 Aggiorna solo il campo location
+                    new_config = old_config.copy()
+                    new_config["location"] = plant["profile"].get("location", "Milan")
 
-                    # === WEATHER FORECAST SERVICE ===
-                    if outdoor:
-                        if "WeatherForecastService" not in services:
-                            dt_factory.add_service(dt_id, "WeatherForecastService", {
-                                "api_key": "05418e63cb684a3a8f2135050250205",
-                                "location": new_location,
-                                "rain_threshold": 50
-                            })
-                            added.append("WeatherForecastService")
-                        else:
-                            # Se esiste, controlla se la location è cambiata → rimuovi e ricrea
-                            dt = dt_factory.get_dt(dt_id)
-                            for s in dt.get("services", []):
-                                if s["name"] == "WeatherForecastService":
-                                    old_loc = s.get("config", {}).get("location", "")
-                                    if old_loc != new_location:
-                                        dt_factory.remove_service(dt_id, "WeatherForecastService")
-                                        removed.append("WeatherForecastService")
+                    dt_factory.remove_service(dt_id, "WateringManagement")
+                    dt_factory.add_service(dt_id, "WateringManagement", new_config)
 
-                                        dt_factory.add_service(dt_id, "WeatherForecastService", {
-                                            "api_key": "05418e63cb684a3a8f2135050250205",
-                                            "location": new_location,
-                                            "rain_threshold": 50
-                                        })
-                                        added.append("WeatherForecastService (location aggiornata)")
-                    else:
-                        if "WeatherForecastService" in services:
-                            dt_factory.remove_service(dt_id, "WeatherForecastService")
-                            removed.append("WeatherForecastService")
-                    # === AUTO WATERING SERVICE ===
-                    if auto_watering:
-                        if "AutoWateringService" not in services:
-                            dt_factory.add_service(dt_id, "AutoWateringService")
-                            added.append("AutoWateringService")
-                    else:
-                        if "AutoWateringService" in services:
-                            dt_factory.remove_service(dt_id, "AutoWateringService")
-                            removed.append("AutoWateringService")
-
-                    # === MESSAGGIO ALL’UTENTE ===
-                    msg_lines = []
-                    if added:
-                        msg_lines.append(f"✅ Servizi aggiunti: {', '.join(added)}")
-                    if updated:
-                        msg_lines.append(f"🔄 Servizi aggiornati: {', '.join(updated)}")
-                    if removed:
-                        msg_lines.append(f"🗑️ Servizi rimossi: {', '.join(removed)}")
-                    if not msg_lines:
-                        msg_lines.append("ℹ️ Il Digital Twin è già allineato.")
-
-                    await send_msg("\n".join(msg_lines))
+                    await send_msg("✅ Configurazione WateringManagement aggiornata (solo location).")
 
                 except Exception as e:
-                    await send_msg(f"⚠️ Errore durante la sincronizzazione DT: {str(e)}")
-
-                return  # trovato e gestito il DT
-
+                    await send_msg(f"⚠️ Errore durante aggiornamento DT: {str(e)}")
+                return
 
 
 async def delete_plant_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):

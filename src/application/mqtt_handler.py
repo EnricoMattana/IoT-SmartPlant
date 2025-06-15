@@ -6,7 +6,7 @@ import logging
 import time
 from threading import Thread, Event
 import uuid
-from src.application.utils import check_humidity_threshold
+from src.application.utils import handle_measurement
 
 
 logger = logging.getLogger(__name__)
@@ -151,27 +151,34 @@ class SmartPlantMQTTHandler:
     def _add_measurement(self, plant_id: str, measurement: dict):
         try:
             db_service = current_app.config['DB_SERVICE']
-            plant = db_service.get_dr("plant", plant_id)
 
+            plant = db_service.get_dr("plant", plant_id)
             if not plant:
                 logger.error(f"Plant not found with ID: {plant_id}")
                 return
 
-            if "data" not in plant:
-                plant["data"] = {}
-            if "measurements" not in plant["data"]:
-                plant["data"]["measurements"] = []
+            # 🔁 Converti timestamp se necessario
+            if isinstance(measurement.get("timestamp"), str):
+                try:
+                    measurement["timestamp"] = datetime.fromisoformat(measurement["timestamp"])
+                except Exception as e:
+                    logger.warning(f"Invalid timestamp format for plant {plant_id}: {e}")
+                    return
 
-            plant["data"]["measurements"].append(measurement)
+            # 📥 Aggiungi misura al database
+            plant.setdefault("data", {})
+            plant["data"].setdefault("measurements", []).append(measurement)
             plant["metadata"]["updated_at"] = datetime.utcnow()
-
             db_service.update_dr("plant", plant_id, plant)
-
             logger.info(f"Measurement added to plant {plant_id}")
+            handle_measurement(plant_id, measurement, plant)
 
-            check_humidity_threshold(plant_id, measurement, plant, db_service)
         except Exception as e:
             logger.error(f"Error updating plant {plant_id}: {e}")
+        
+        
+        
+
 
 
     def publish(self, topic: str, payload: str, qos: int = 1, retain: bool = False):

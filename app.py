@@ -37,18 +37,17 @@ class FlaskServer:
         """Initialize all required components and store them in app config"""
         schema_registry = SchemaRegistry()
         schema_registry.load_schema(
-        'plant',
-        'src/virtualization/templates/plant.yaml'
+            'plant',
+            'src/virtualization/templates/plant.yaml'
         )
         schema_registry.load_schema(
-        'user',
-        'src/virtualization/templates/user.yaml'
+            'user',
+            'src/virtualization/templates/user.yaml'
         )
-        # Load database configuration
+
         db_config = ConfigLoader.load_database_config()
         connection_string = ConfigLoader.build_connection_string(db_config)
 
-        # Initialize DatabaseService with populated schema_registry
         db_service = DatabaseService(
             connection_string=connection_string,
             db_name=db_config["settings"]["name"],
@@ -56,13 +55,17 @@ class FlaskServer:
         )
         db_service.connect()
 
-        # Initialize DTFactory
         dt_factory = DTFactory(db_service, schema_registry)
 
-        # Store references
+        from src.virtualization.digital_replica.dr_factory import DRFactory
+        dr_factory = DRFactory("src/virtualization/templates/plant.yaml")
+
+        # 🔧 Save in app config
         self.app.config["SCHEMA_REGISTRY"] = schema_registry
         self.app.config["DB_SERVICE"] = db_service
         self.app.config["DT_FACTORY"] = dt_factory
+        self.app.config["DR_FACTORY"] = dr_factory
+
     def _register_blueprints(self):
         """Register all API blueprints"""
         register_api_blueprints(self.app)

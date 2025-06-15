@@ -66,12 +66,11 @@ schemas:
         auto_watering_status:
           type: Dict
           item_constraints:
-            required_fields: ["last_block", "last_water", "consec_failed", "consec_water"]
+            required_fields: ["last_forecast", "skip_pred", "disable_aw"]
             type_mappings:
-              last_block: str
-              last_water: datetime
-              consec_failed: int
-              consec_water: int
+              last_forecast: datetime
+              skip_pred: bool
+              disable_aw: bool
 
       data:
         measurements:
@@ -88,9 +87,8 @@ schemas:
         status: "active"
         last_warning_ts: null
         auto_watering_status:
-          last_block: null
-          last_water: null
-          consec_failed: 0
-          consec_water: 0
+          last_forecast: null
+          skip_pred: False
+          disable_aw: False
       data:
         measurements: []
