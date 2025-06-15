@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 from telegram import InputFile
 import statistics
-
+logger = logging.getLogger(__name__)
 
 async def calibrate_dry_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = update.effective_user.id
@@ -110,7 +110,6 @@ async def water_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-logger = logging.getLogger(__name__)
 
 
 async def send_humidity_alert_to_user(telegram_id: int, plant_name: str, humidity: float):

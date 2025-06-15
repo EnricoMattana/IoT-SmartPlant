@@ -24,14 +24,18 @@ async def update_plant_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     plant_dict, pretty_dict= get_user_plants(db, update.effective_user.id)
     context.user_data["plant_dict"] = plant_dict
 
-    print(pretty_dict)
+    #print(pretty_dict)
     # 2️⃣  Build a pretty list of names for the reply
     if not plant_dict:
         await update.message.reply_text("ℹ️ Non hai ancora registrato nessuna pianta.")
         return ConversationHandler.END
 
-    names_list = "\n".join(f"- {name}" for name in pretty_dict.keys())
+    names = []
+    for name in pretty_dict.keys():
+        names.append(f"- {name}")
 
+    names_list = "\n".join(names)
+    context.user_data["pretty_names"]= names_list
     # 3️⃣  Ask which plant the user wants to update
     await update.message.reply_text(
         f"🪴 Ecco le tue piante registrate:\n{names_list}\n\n"
@@ -43,8 +47,23 @@ async def update_plant_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def update_plant_ask_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # normalise the user input exactly like in the dict
+    # ⌨️ Leggi l'input normalizzato
     plant_name_key = update.message.text.lower().strip()
+    
+    # 🌱 Recupera il dizionario nome → ID dalle user_data
+    plant_dict = context.user_data.get("plant_dict", {})
+
+    # ❌ Se il nome non è tra quelli validi, invia messaggio di errore
+    if plant_name_key not in plant_dict:
+        plant_names= context.user_data.get("pretty_names")
+        await update.message.reply_text(
+            f"❌ Nome non valido.\n\nEcco le piante disponibili:\n{plant_names}\n\n"
+            "Per favore, inserisci *esattamente* il nome di una delle tue piante.",
+            parse_mode="Markdown"
+        )
+        return ASK_PLANT_NAME  # ← Ripeti la domanda
+
+    # ✅ Se valido, salva il nome e procedi
     context.user_data["plant_name_key"] = plant_name_key
 
     await update.message.reply_text(
@@ -54,21 +73,38 @@ async def update_plant_ask_field(update: Update, context: ContextTypes.DEFAULT_T
         "- location (testo descrittivo)\n"
         "- outdoor (sì/no)\n"
         "- auto_watering (sì/no)\n\n"
-        "Scrivi il nome del campo:"
+        "Scrivi il nome del campo. \n"
+        "Oppure scrivi /cancel per annullare."
     )
     return ASK_FIELD
 
 
 async def update_plant_ask_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     field = update.message.text.strip().lower()
+    valid_fields = ["name", "description", "location", "outdoor", "auto_watering"]
+
+    if field not in valid_fields:
+        await update.message.reply_text(
+            "❌ Campo non valido. Usa uno tra:\n"
+            "- name\n"
+            "- description\n"
+            "- location\n"
+            "- outdoor (sì/no)\n"
+            "- auto\\_watering (sì/no)\n\n"
+            "Scrivi *esattamente* il nome del campo che vuoi aggiornare.\n"
+            "Puoi anche annullare con /cancel.\n",
+            parse_mode="Markdown"
+        )
+        return ASK_FIELD  # 🔁 Resta nello stesso stato
+
+    # ✅ Campo valido → salva e prosegui
     context.user_data["field"] = field
 
-    valid_fields = ["name", "description", "location", "outdoor", "auto_watering"]
-    if field not in valid_fields:
-        await update.message.reply_text("❌ Campo non valido. Usa uno tra: name, description, location, outdoor, auto_watering")
-        return ConversationHandler.END
-
-    await update.message.reply_text(f"✏️ Inserisci il nuovo valore per *{field}*:", parse_mode="Markdown")
+    await update.message.reply_text(
+        f"✏️ Inserisci il nuovo valore per *{field}*:\n"
+        "Oppure scrivi /cancel per annullare.",
+        parse_mode="Markdown"
+    )
     return ASK_NEW_VALUE
 
 
@@ -87,29 +123,30 @@ async def update_plant_finish(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("Errore interno: utente non trovato.")
         return ConversationHandler.END
 
-    plants = db.query_drs("plant", {"_id": plant_id})
+    plant = db.get_dr("plant", plant_id)
 
-    if not plants:
-        await update.message.reply_text("❌ Nessuna pianta trovata con questo ID.")
-        return ConversationHandler.END
-
-    plant = plants[0]
-
-    # 🔁 Gestione dei campi booleani
+     # 🔁 Gestione campo booleano o testuale
     if field in ["auto_watering", "outdoor"]:
-        new_bool = new_value.lower() in ["sì", "si", "yes", "y", "true", "1"]
-        plant["profile"][field] = new_bool
-        msg_val = "✅ sì" if new_bool else "❌ no"
-
+        new_value_converted = new_value.lower() in ["sì", "si", "yes", "y", "true", "1"]
+        update_dict = {
+            "profile": {field: new_value_converted}
+        }
+        msg_val = "✅ sì" if new_value_converted else "❌ no"
     else:
-        # name, description, location
-        plant["profile"][field] = new_value
+        update_dict = {
+            "profile": {field: new_value}
+        }
         msg_val = new_value
 
-    plant["metadata"]["updated_at"] = datetime.utcnow()
-    db.update_dr("plant", plant["_id"], plant)
+    # 🛠️ Aggiorna usando DRFactory
+    dr_factory=current_app.config["DR_FACTORY"]
+    updated_plant = dr_factory.update_dr(plant, update_dict)
+    db.update_dr("plant", plant_id, updated_plant)
 
-    await update.message.reply_text(f"✅ Aggiornamento completato: *{field}* → `{msg_val}`", parse_mode="Markdown")
+    await update.message.reply_text(
+        f"✅ Aggiornamento completato: *{field}* → `{msg_val}`",
+        parse_mode="Markdown"
+    )
     await sync_dt_with_plant_update(
         plant=plant,
         plant_id=plant_id,
@@ -131,7 +168,11 @@ async def list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ℹ️ Non hai ancora registrato nessuna pianta.")
         return
 
-    names_list = "\n".join(f"- {name}" for name in pretty_dict.keys())
+    names = []
+    for name in pretty_dict.keys():
+        names.append(f"- {name}")
+
+    names_list = "\n".join(names)
 
     await update.message.reply_text(
         f"🪴 Ecco la lista delle tue piante:\n{names_list}",
@@ -310,11 +351,6 @@ async def universal_fallback(update, context):
 
 def get_user_plants(db, telegram_id):
 
-    """
-    Return a dict that maps each plant *name* (lower‑cased, stripped)
-    to its unique plant *ID* for the given Telegram user.
-    """
-
     #Find the user id
     user = get_logged_user(telegram_id)
     if not user:
@@ -326,9 +362,6 @@ def get_user_plants(db, telegram_id):
     # Fetch all those plant documents from the DB
     plants = db.query_drs("plant", {"_id": {"$in": plant_ids}})
 
-    # Build and return a safe mapping name → id
-    # The name is taken from the plant profile, and the mapping
-    # is case‑insensitive and ignores leading/trailing spaces
     plant_dict = {}
     for plant in plants:
         name = plant["profile"].get("name", "Unnamed Plant").lower().strip()

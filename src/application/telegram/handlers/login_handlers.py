@@ -106,13 +106,14 @@ async def register_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         new_user["_id"] = user_id
         db.save_dr("user", new_user)
-
+        
         await update.message.reply_text(f"✅ Registered successfully as {username}. Now you can /login")
 
     except Exception as e:
         await update.message.reply_text(f"Registration error: {e}")
 
 
+'''
 async def create_plant_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         telegram_id = update.effective_user.id
@@ -174,3 +175,4 @@ async def create_plant_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         await update.message.reply_text(f"❌ Errore durante la creazione della pianta: {str(e)}")
 
+'''

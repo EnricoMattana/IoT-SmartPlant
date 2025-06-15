@@ -9,7 +9,7 @@ import asyncio
 from src.application.SmartPlant_apis import register_smartplant_blueprint
 from src.application.api import register_api_blueprints 
 from src.application.mqtt_handler import SmartPlantMQTTHandler
-
+from src.virtualization.digital_replica.dr_factory import DRFactory
 import logging
 logging.basicConfig(level=logging.INFO)
 
@@ -57,7 +57,7 @@ class FlaskServer:
 
         dt_factory = DTFactory(db_service, schema_registry)
 
-        from src.virtualization.digital_replica.dr_factory import DRFactory
+        
         dr_factory = DRFactory("src/virtualization/templates/plant.yaml")
 
         # 🔧 Save in app config

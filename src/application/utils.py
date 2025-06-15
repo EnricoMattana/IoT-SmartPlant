@@ -7,6 +7,7 @@ from typing import Optional
 from telegram import Bot
 import logging
 import asyncio
+from src.services.plant_service import WateringManagement
 from flask import current_app
 from asyncio import run_coroutine_threadsafe
 
@@ -61,7 +62,7 @@ def handle_measurement(plant_id: str, measurement: dict, plant: dict = None):
         return
 
     # Importa dinamicamente e istanzia il servizio
-    from src.services.plant_service import WateringManagement
+    
     service = WateringManagement()
     service.configure(service_entry.get("config", {}))
 
