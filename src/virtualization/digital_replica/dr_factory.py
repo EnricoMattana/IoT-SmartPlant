@@ -54,7 +54,10 @@ class DRFactory:
                         else (
                             float
                             if field_type == "float"
-                            else datetime if field_type == "datetime" else Any
+                            else datetime if field_type == "datetime" else (
+                                bool 
+                                if field_type=="bool" else Any
+                            )
                         )
                     )
                 ),

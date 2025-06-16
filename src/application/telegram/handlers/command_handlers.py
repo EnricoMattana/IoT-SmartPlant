@@ -15,6 +15,9 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 from telegram import InputFile
 import statistics
+import matplotlib.dates as mdates
+
+
 logger = logging.getLogger(__name__)
 
 async def calibrate_dry_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -165,7 +168,7 @@ async def analytics_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     filtered = []
     for m in measurements:
         try:
-            ts = datetime.fromisoformat(m["timestamp"])
+            ts = m["timestamp"]
             if start_date <= ts <= end_date:
                 filtered.append((ts, m["type"], m["value"]))
         except Exception:
@@ -199,30 +202,25 @@ async def analytics_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return f"📊 Min: {min_val} ({min_time})\n📈 Max: {max_val} ({max_time})\n📉 Media: {avg_val}"
 
     def plot_data(data, ylabel, title):
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(10, 4))  # aumenta la larghezza
+
         if data:
             data.sort(key=lambda x: x[0])
             times, values = zip(*data)
-            ax.plot(times, values, marker='o')
+
+            ax.plot(times, values, marker='o', linestyle='-')
             ax.set_ylabel(ylabel)
             ax.set_title(title)
             ax.grid(True)
 
-            # Asse X inferiore: Giorno
-            ax.set_xlabel("Giorno")
-            day_labels = [dt.strftime("%d-%m") for dt in times]
-            ax.set_xticks(times[::max(1, len(times)//8)])
-            ax.set_xticklabels(day_labels[::max(1, len(times)//8)], rotation=45)
+            # Formattazione asse X
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m\n%H:%M'))
+            ax.tick_params(axis='x', rotation=45)
 
-            # Asse X superiore: Ora:Minuto
-            ax2 = ax.twiny()
-            ax2.set_xlim(ax.get_xlim())
-            hour_labels = [dt.strftime("%H:%M") for dt in times]
-            ax2.set_xticks(times[::max(1, len(times)//8)])
-            ax2.set_xticklabels(hour_labels[::max(1, len(times)//8)], rotation=45)
-            ax2.set_xlabel("Ora")
+            # Espansione dei margini automatici
+            fig.autofmt_xdate()
+            fig.tight_layout()
 
-        fig.tight_layout()
         buf = BytesIO()
         fig.savefig(buf, format='png')
         buf.seek(0)
@@ -238,3 +236,82 @@ async def analytics_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         buf = plot_data(humidity_data, "Umidità (%)", f"Umidità - {plant_name_input}")
         await update.message.reply_photo(photo=InputFile(buf, filename="humidity.png"))
         await update.message.reply_text(f"Umidità: {compute_stats(humidity_data)}")
+
+
+import asyncio
+import json
+
+async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    telegram_id = update.effective_user.id
+
+    if not is_authenticated(telegram_id):
+        await update.message.reply_text("❌ Devi prima fare il login.")
+        return
+
+    if len(context.args) != 1:
+        await update.message.reply_text("Usage: /status <nome_pianta>")
+        return
+
+    plant_name_input = context.args[0].lower().strip()
+    db = current_app.config["DB_SERVICE"]
+    plant_dict, _ = get_user_plants(db, telegram_id)
+    plant_id = plant_dict.get(plant_name_input)
+
+    if not plant_id:
+        await update.message.reply_text(f"❌ Pianta '{plant_name_input}' non trovata.")
+        return
+
+    # 1️⃣ Recupera la Digital Replica
+    plant = db.get_dr("plant", plant_id)
+    measurements = plant.get("data", {}).get("measurements", [])
+
+    last_measurement = max(measurements, key=lambda m: m["timestamp"], default=None)
+
+    # 2️⃣ Controlla timestamp
+    too_old = True
+    if last_measurement:
+        timestamp = last_measurement["timestamp"]
+        if isinstance(timestamp, str):
+            timestamp = datetime.fromisoformat(timestamp)
+        too_old = datetime.utcnow() - timestamp > timedelta(hours=1)
+
+    if too_old:
+        await update.message.reply_text("⌛ Misura vecchia. Invio richiesta alla pianta...")
+        # 3️⃣ Invia comando via MQTT
+        mqtt_client = current_app.config["MQTT_CLIENT"]
+        command_topic = f"smartplant/{plant_id}/commands"
+        mqtt_client.publish(command_topic, json.dumps({"command": "send_now"}))
+
+        # 4️⃣ Attendi nuova misura (polling max 10s)
+        for _ in range(10):
+            await asyncio.sleep(1)
+            plant = db.get_dr("plant", plant_id)
+            new_measurements = plant.get("data", {}).get("measurements", [])
+            newest = max(new_measurements, key=lambda m: m["timestamp"], default=None)
+            if newest and newest != last_measurement:
+                break
+        else:
+            await update.message.reply_text("⚠️ Nessuna risposta dalla pianta.")
+            return
+
+    # 5️⃣ Mostra stato attuale
+    plant = db.get_dr("plant", plant_id)
+    measurements = plant.get("data", {}).get("measurements", [])
+    latest = max(measurements, key=lambda m: m["timestamp"], default=None)
+
+    if not latest:
+        await update.message.reply_text("❌ Nessuna misura trovata.")
+        return
+
+    ts = latest["timestamp"]
+    if isinstance(ts, datetime):
+        ts_str = ts.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        ts_str = ts
+
+    await update.message.reply_text(
+        f"📡 Ultima misura ricevuta:\n"
+        f"- Tipo: {latest['type']}\n"
+        f"- Valore: {latest['value']}\n"
+        f"- Timestamp: {ts_str}"
+    )

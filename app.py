@@ -25,8 +25,6 @@ class FlaskServer:
         self._init_components()
         self._register_blueprints()
         self.telegram_handler = TelegramWebhookHandler(self.app)
-        #self.telegram_loop = asyncio.new_event_loop()
-        #self.app.config["TELEGRAM_LOOP"] = self.telegram_loop
         self.app.config['MQTT_CONFIG'] = MQTT_CONFIG
         self.mqtt_handler = SmartPlantMQTTHandler(self.app)
         self.app.config['MQTT_HANDLER'] = self.mqtt_handler

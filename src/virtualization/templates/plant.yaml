@@ -39,48 +39,28 @@ schemas:
         type: str
       type:
         type: str
+    #profile
+      name:
+        type: str
+      owner_id:
+        type: str
+      description:
+        type: str
+      location:
+        type: str
+      outdoor:
+        type: bool
+      auto_watering:
+        type: bool
 
-      profile:
-        name:
-          type: str
-        owner_id:
-          type: str
-        description:
-          type: str
-        location:
-          type: str
-        outdoor:
-          type: bool
-        auto_watering:
-          type: bool
-
-      metadata:
-        created_at:
-          type: datetime
-        updated_at:
-          type: datetime
-        status:
-          type: str
-        last_warning_ts:
-          type: datetime
-        auto_watering_status:
-          type: Dict
-          item_constraints:
-            required_fields: ["last_forecast", "skip_pred", "disable_aw"]
-            type_mappings:
-              last_forecast: datetime
-              skip_pred: bool
-              disable_aw: bool
-
-      data:
-        measurements:
-          type: List[Dict]
-          item_constraints:
-            required_fields: ["type", "value", "timestamp"]
-            type_mappings:
-              type: str
-              value: float
-              timestamp: datetime
+      measurements:
+        type: List[Dict]
+        item_constraints:
+          required_fields: ["type", "value", "timestamp"]
+          type_mappings:
+            type: str
+            value: float
+            timestamp: datetime
 
     initialization:
       metadata:

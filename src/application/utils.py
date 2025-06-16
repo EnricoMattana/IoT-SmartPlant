@@ -1,5 +1,4 @@
 # utils.py
-
 from src.application.telegram.handlers.command_handlers import send_humidity_alert_to_user
 from src.application.telegram.handlers.login_handlers import is_authenticated, get_logged_user
 from datetime import datetime, timedelta
@@ -49,9 +48,7 @@ def handle_measurement(plant_id: str, measurement: dict, plant: dict = None):
     dt_factory = current_app.config['DT_FACTORY']
     db_service = current_app.config['DB_SERVICE']
     dt_data = dt_factory.get_dt_by_plant_id(plant_id)
-    if not dt_data:
-        logger.warning(f"No DT found for plant {plant_id}")
-        return
+    
 
     # Cerca il servizio come dizionario nella lista dei servizi
     services = dt_data.get("services", [])

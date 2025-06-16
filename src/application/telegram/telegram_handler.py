@@ -6,7 +6,7 @@ import logging
 
 from src.application.telegram.config.settings import TELEGRAM_TOKEN, NGROK_TOKEN, WEBHOOK_PATH
 from src.application.telegram.handlers.base_handlers import (
-    start_handler, help_handler, echo_handler
+    start_handler, help_handler
 )
 from src.application.telegram.handlers.login_handlers import login_handler, logout_handler, register_handler
 from src.application.telegram.routes.webhook_routes import webhook, init_routes
@@ -15,7 +15,7 @@ from src.application.telegram.handlers.plant_handlers import (
      setlocation, recv_location, list_handler,
     create_plant2_start, create_plant2_ask_name, create_plant2_ask_city_and_io, parse_city_and_io,create_plant2_finish, cancel_create_plant2,
     universal_fallback, delete_plant_handler)
-from src.application.telegram.handlers.command_handlers import calibrate_dry_handler, calibrate_wet_handler, water_handler, analytics_handler
+from src.application.telegram.handlers.command_handlers import calibrate_dry_handler, calibrate_wet_handler, water_handler, analytics_handler, status_handler
 ASK_PLANT_NAME, ASK_FIELD, ASK_NEW_VALUE = range(3)
 ASK_NEW_PLANT_ID, ASK_NEW_PLANT_NAME, ASK_CITY_AND_IO, ASK_AUTOWATER = range(3, 7)
 
@@ -106,7 +106,7 @@ class TelegramWebhookHandler:
         self.application.add_handler(CommandHandler("calibrate_dry", calibrate_dry_handler))
         self.application.add_handler(CommandHandler("calibrate_wet", calibrate_wet_handler))
         self.application.add_handler(CommandHandler("water", water_handler))
-
+        self.application.add_handler(CommandHandler("status", status_handler))
 
         self.application.add_handler(conv_handler)
         self.application.add_handler(create_plant2_conv)
@@ -118,4 +118,7 @@ class TelegramWebhookHandler:
             self.loop.run_until_complete(self.application.shutdown())
             self.application.telegram_loop.stop()
             self.loop.close()
+
+
+
 

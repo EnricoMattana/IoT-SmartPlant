@@ -136,18 +136,56 @@ class SmartPlantMQTTHandler:
                 logger.error("Payload must be a dict or list of dicts")
                 return
 
-            for m in measurements:
-                if not all(k in m for k in ("type", "value", "timestamp")):
-                    logger.error("Missing measurement fields in one of the items")
-                    return
-
+           
             with self.app.app_context():
-                for m in measurements:
-                    self._add_measurement(plant_id, m)
+                self._add_measurements_batch(plant_id, measurements)
             
         except Exception as e:
             logger.error(f"Error processing incoming MQTT message: {e}")
+    
+    def _add_measurements_batch(self, plant_id: str, measurements: list[dict]):
+        db_service = current_app.config["DB_SERVICE"]
+        dr_factory = current_app.config["DR_FACTORY"]
 
+        # recupera la Digital Replica
+        plant = db_service.get_dr("plant", plant_id)
+        if not plant:
+            logger.error(f"Plant not found with ID: {plant_id}")
+            return
+
+        # normalizza/parsifica i timestamp
+        for m in measurements:
+            ts = m.get("timestamp")
+            if isinstance(ts, str):
+                try:
+                    m["timestamp"] = datetime.fromisoformat(ts)
+                except Exception as e:
+                    logger.warning(f"Invalid timestamp format for plant {plant_id}: {e}")
+                    return
+
+        # usa DRFactory per fare il merge sicuro
+        update_dict = {
+            "data": {
+                "measurements": plant.get("data", {}).get("measurements", []) + measurements
+            }
+        }
+        updated_plant = dr_factory.update_dr(plant, update_dict)
+
+        # salva una sola volta nel DB
+        db_service.update_dr("plant", plant_id, updated_plant)
+        logger.info(f"Batch of {len(measurements)} measurements added to plant {plant_id}")
+
+        # 5️⃣ chiama handle_measurement SOLO sull’ultima misura di umidità
+        last_humidity = None
+        for m in reversed(measurements):
+            if m["type"] == "humidity":
+                last_humidity = m
+                break
+
+        if last_humidity:
+            print("Entro in last humidity\n\n")
+            handle_measurement(plant_id, last_humidity, updated_plant)
+            
     def _add_measurement(self, plant_id: str, measurement: dict):
         try:
             db_service = current_app.config['DB_SERVICE']
@@ -168,7 +206,6 @@ class SmartPlantMQTTHandler:
             # 📥 Aggiungi misura al database
             plant.setdefault("data", {})
             plant["data"].setdefault("measurements", []).append(measurement)
-            plant["metadata"]["updated_at"] = datetime.utcnow()
             db_service.update_dr("plant", plant_id, plant)
             logger.info(f"Measurement added to plant {plant_id}")
             handle_measurement(plant_id, measurement, plant)

@@ -6,8 +6,8 @@ import random
 import time
 
 PLANT_ID = "PL0"
-NUM_GIORNI = 31
-MISURE_AL_GIORNO = 5
+NUM_GIORNI = 1
+MISURE_AL_GIORNO = 2
 PAUSA = 0.1
 
 client = mqtt.Client()
@@ -29,8 +29,10 @@ def publish_fake_data():
                 },
                 {
                     "type": "light",
-                    "value": round(random.uniform(10.0, 90.0), 1),
-                    "timestamp": timestamp
+                    "value": "ccc",
+                    "timestamp": timestamp,
+                    "BOh":"bo"
+
                 }
             ]
             topic = f"smartplant/{PLANT_ID}/measurement"

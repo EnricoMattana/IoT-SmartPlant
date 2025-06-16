@@ -106,7 +106,9 @@ async def register_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         new_user["_id"] = user_id
         db.save_dr("user", new_user)
-        
+            
+        dt_factory = current_app.config['DT_FACTORY']
+        dt_id = dt_factory.create_dt(name=f"Garden_{user_id}")
         await update.message.reply_text(f"✅ Registered successfully as {username}. Now you can /login")
 
     except Exception as e:
