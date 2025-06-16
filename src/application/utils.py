@@ -47,28 +47,41 @@ def handle_notification(plant_id, humidity, plant, db_service):
 def handle_measurement(plant_id: str, measurement: dict, plant: dict = None):
     dt_factory = current_app.config['DT_FACTORY']
     db_service = current_app.config['DB_SERVICE']
+
+    # Recupera il DT che contiene questa pianta
     dt_data = dt_factory.get_dt_by_plant_id(plant_id)
-    
-
-    # Cerca il servizio come dizionario nella lista dei servizi
-    services = dt_data.get("services", [])
-    service_entry = next((s for s in services if s["name"] == "WateringManagement"), None)
-
-    if not service_entry:
-        logger.warning(f"WateringManagement service not found for plant {plant_id}")
+    if not dt_data:
+        logger.warning(f"No DT found for plant {plant_id}")
         return
 
-    # Importa dinamicamente e istanzia il servizio
-    
-    service = WateringManagement()
-    service.configure(service_entry.get("config", {}))
+    # Costruisce l'istanza runtime del DT
+    dt_instance = dt_factory.get_dt_instance(dt_data["_id"])
+    print(dt_instance)
+    if not dt_instance:
+        logger.warning(f"Failed to create DT instance for {dt_data['_id']}")
+        return
 
-    # Esegui
+    # Verifica che il servizio WateringManagement sia presente
+    if "WateringManagement" not in dt_instance.list_services():
+        logger.warning(f"WateringManagement service not found for DT {dt_data['_id']}")
+        return
+
+    # ✅ Prepara i parametri di input e invoca il servizio tramite il DT
     context = {
         "DB_SERVICE": db_service,
-        "DT_FACTORY": dt_factory
+        "DT_FACTORY": dt_factory,
     }
-    decision = service.execute(plant_id=plant_id, data=measurement, context=context)
+
+    # `data=measurement` sarà ricevuto dal servizio
+    decision = dt_instance.execute_service(
+        service_name="WateringManagement",
+        plant_id=plant_id,
+        measurement=measurement,
+        context={
+            "DB_SERVICE": db_service,
+            "DT_FACTORY": dt_factory,
+    }
+)
     if decision["action"] == "0":
         logger.info(f"WateringManagement decision: {decision} → No action taken")
     elif decision["action"] == "notify":

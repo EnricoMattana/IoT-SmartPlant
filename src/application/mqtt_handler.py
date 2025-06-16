@@ -181,9 +181,8 @@ class SmartPlantMQTTHandler:
             if m["type"] == "humidity":
                 last_humidity = m
                 break
-
+ 
         if last_humidity:
-            print("Entro in last humidity\n\n")
             handle_measurement(plant_id, last_humidity, updated_plant)
             
     def _add_measurement(self, plant_id: str, measurement: dict):

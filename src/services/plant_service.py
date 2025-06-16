@@ -17,7 +17,7 @@ NOTIFICATION_COOLDOWN_MIN = 15
 class WateringManagement(BaseService):
     def __init__(self):
         super().__init__()
-        self.name = "Watering"
+        self.name = "WateringManagement"
         self.api_key = "05418e63cb684a3a8f2135050250205"
         self.location = "Cagliari"
         self.rain_threshold = PROB_RAIN_THRESHOLD
@@ -34,7 +34,13 @@ class WateringManagement(BaseService):
         self.forecast_cooldown_hr = config.get("forecast_cd_hr", self.forecast_cooldown_hr)
         self.delta_skip_hr = config.get("delta_skip_hr", self.delta_skip_hr)
 
-    def execute(self, plant_id: str, data: Dict, context: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(self, data: Dict, **kwargs) -> Dict[str, Any]:
+        dr = data.get("digital_replicas", [])[0]  # prendi la prima DR
+        plant_id = dr.get("_id")
+        if not plant_id:
+            raise ValueError("Missing _id in Digital Replica")
+        context = kwargs.get("context", {})
+        measurement=kwargs.get("measurement")
         db = context["DB_SERVICE"]
         plant = db.get_dr("plant", plant_id)
         metadata = plant.get("metadata", {})
@@ -42,7 +48,7 @@ class WateringManagement(BaseService):
         now = datetime.utcnow()
         req_action = "0"
 
-        logger.info(f"[{plant_id}] 🔍 Esecuzione WateringManagement – tipo: {data['type']} – valore: {data['value']}")
+        logger.info(f"[{plant_id}] 🔍 Esecuzione WateringManagement – tipo: {measurement['type']} – valore: {measurement['value']}")
 
         if plant["profile"].get("outdoor", False) and plant["profile"].get("auto_watering", False):
             last_forecast = status.get("last_forecast")
@@ -64,15 +70,15 @@ class WateringManagement(BaseService):
 
                 status["skip_pred"] = False
 
-        if data["type"] != "humidity":
+        if measurement["type"] != "humidity":
             if status != metadata.get("auto_watering_status", {}):
                 metadata["auto_watering_status"] = status
                 plant["metadata"] = metadata
                 db.update_dr("plant", plant_id, plant)
             return {"action": req_action}
 
-        humidity = data["value"]
-        ts = data["timestamp"]
+        humidity = measurement["value"]
+        ts = measurement["timestamp"]
         if not isinstance(ts, datetime):
             ts = now  # fallback
 
@@ -149,4 +155,3 @@ class WateringManagement(BaseService):
             "hours": [h["time"] for h in selected],
             "location": self.location
         }
-

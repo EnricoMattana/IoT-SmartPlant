@@ -29,9 +29,8 @@ def publish_fake_data():
                 },
                 {
                     "type": "light",
-                    "value": "ccc",
+                    "value": round(random.uniform(0.0, 100.0), 1),
                     "timestamp": timestamp,
-                    "BOh":"bo"
 
                 }
             ]
