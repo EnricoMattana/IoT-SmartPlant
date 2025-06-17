@@ -184,7 +184,7 @@ class DRFactory:
         # Create Pydantic models for sections
         ProfileModel = self._create_profile_model()
         DataModel = self._create_data_model()
-
+        print("[DEBUG] Loaded schema keys:", self.schema.keys())
         # Initialize with required fields and defaults
         dr_dict = {
             "_id": str(uuid.uuid4()),  # Usiamo _id per MongoDB
@@ -200,6 +200,7 @@ class DRFactory:
         init_values = (
             self.schema["schemas"].get("validations", {}).get("initialization", {})
         )
+        print("Ciao ", init_values)
         for section, defaults in init_values.items():
             if section == "metadata":
                 dr_dict["metadata"].update(defaults)
@@ -209,6 +210,9 @@ class DRFactory:
                 "devices",
                 "medications",
                 "measurements",
+                "last_login",
+                "owned_plants",
+                "owned_gardens"
             ]:
                 # Questi campi vanno dentro data
                 dr_dict["data"][section] = defaults

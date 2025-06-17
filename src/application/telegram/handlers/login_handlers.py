@@ -83,32 +83,19 @@ async def register_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         password = context.args[1]
 
         db = current_app.config['DB_SERVICE']
+        dr_factory_user=current_app.config['DR_FACTORY_USER']
         users = db.query_drs("user", {"profile.username": username})
         if users:
             await update.message.reply_text("❌ Username already taken")
             return
 
-        user_id = str(uuid.uuid4())
-        dr_factory = DRFactory("src/virtualization/templates/user.yaml")
-        new_user = dr_factory.create_dr("user", {
+        new_user = dr_factory_user.create_dr("user", {
             "profile": {
                 "username": username,
                 "password": generate_password_hash(password)
-            },
-            "metadata": {
-                "status": "active"
-            },
-            "data": {
-                "owned_plants": [],
-                "last_login": None
             }
         })
-
-        new_user["_id"] = user_id
         db.save_dr("user", new_user)
-            
-        dt_factory = current_app.config['DT_FACTORY']
-        dt_id = dt_factory.create_dt(name=f"Garden_{user_id}")
         await update.message.reply_text(f"✅ Registered successfully as {username}. Now you can /login")
 
     except Exception as e:

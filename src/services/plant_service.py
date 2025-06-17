@@ -4,6 +4,9 @@ from typing import Dict, Any
 from .base import BaseService 
 from copy import copy
 import logging
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Union
+import statistics
 
 logger = logging.getLogger(__name__)
 
@@ -25,29 +28,70 @@ class WateringManagement(BaseService):
         self.forecast_cooldown_hr = FORECAST_COOLDOWN_HR
         self.delta_skip_hr = DELTA_SKIP
         self.notification_cooldown_min = NOTIFICATION_COOLDOWN_MIN
-
     def configure(self, config: Dict[str, Any]):
+        preset_defaults = {}
+
+        preset = config.get("preset")
+        if preset == "fragile":
+            preset_defaults = {
+                "rain_threshold": 25,
+                "humidity_threshold": 60,
+                "delta_skip_hr": 1,
+                "forecast_cooldown_hr": 3,
+                "notification_cooldown_min": 15,
+            }
+        elif preset == "normal":
+            preset_defaults = {
+                "rain_threshold": 60,
+                "humidity_threshold": 30,
+                "delta_skip_hr": 3,
+                "forecast_cooldown_hr": 4,
+                "notification_cooldown_min": 30,
+            }
+        elif preset == "resilient":
+            preset_defaults = {
+                "rain_threshold": 80,
+                "humidity_threshold": 20,
+                "delta_skip_hr": 6,
+                "forecast_cooldown_hr": 6,
+                "notification_cooldown_min": 60,
+            }
+        
+
+        # Applica i valori effettivi: preset + override solo se presente nel config
         self.api_key = config.get("api_key", self.api_key)
         self.location = config.get("location", self.location)
         self.outdoor = config.get("outdoor", False)
-        self.rain_threshold = config.get("rain_threshold", self.rain_threshold)
-        self.forecast_cooldown_hr = config.get("forecast_cd_hr", self.forecast_cooldown_hr)
-        self.delta_skip_hr = config.get("delta_skip_hr", self.delta_skip_hr)
+        self.rain_threshold = config.get("rain_threshold", preset_defaults.get("rain_threshold", self.rain_threshold))
+        self.humidity_threshold = config.get("humidity_threshold", preset_defaults.get("humidity_threshold", self.humidity_threshold))
+        self.forecast_cooldown_hr = config.get("forecast_cd_hr", preset_defaults.get("forecast_cooldown_hr", self.forecast_cooldown_hr))
+        self.delta_skip_hr = config.get("delta_skip_hr", preset_defaults.get("delta_skip_hr", self.delta_skip_hr))
+        self.notification_cooldown_min = config.get("notification_cd_min", preset_defaults.get("notification_cooldown_min", self.notification_cooldown_min))
 
     def execute(self, data: Dict, **kwargs) -> Dict[str, Any]:
-        dr = data.get("digital_replicas", [])[0]  # prendi la prima DR
-        plant_id = dr.get("_id")
+        plant_id = kwargs.get("plant_id")
+        context=kwargs.get("context")
+        db=context["DB_SERVICE"]
+        print(data)
+        print(data.keys())
         if not plant_id:
-            raise ValueError("Missing _id in Digital Replica")
-        context = kwargs.get("context", {})
-        measurement=kwargs.get("measurement")
-        db = context["DB_SERVICE"]
-        plant = db.get_dr("plant", plant_id)
+            raise ValueError("plant_id mancante")
+
+        plant = None
+        for dr in data["digital_replicas"]:
+            if dr.get("_id") == plant_id and dr.get("type") == "plant":
+                plant = dr
+                break
+
+        if plant is None:
+            raise ValueError(f"⚠️ Nessuna DR di tipo 'plant' trovata con id {plant_id} nel DT")
+
         metadata = plant.get("metadata", {})
-        status = copy(metadata.get("auto_watering_status", {}))
+        status = metadata.get("auto_watering_status", {})
+        measurement=kwargs.get("measurement")
         now = datetime.utcnow()
         req_action = "0"
-
+        print( self.rain_threshold)
         logger.info(f"[{plant_id}] 🔍 Esecuzione WateringManagement – tipo: {measurement['type']} – valore: {measurement['value']}")
 
         if plant["profile"].get("outdoor", False) and plant["profile"].get("auto_watering", False):
@@ -112,7 +156,7 @@ class WateringManagement(BaseService):
         else:
             last_forecast = status.get("last_forecast")
             if not isinstance(last_forecast, datetime):
-                last_forecast = now - timedelta(hours=10)
+                last_forecast = now - timedelta(hours=100)
             
             if ts - last_forecast >= timedelta(hours=self.delta_skip_hr):
                 logger.info(f"[{plant_id}] ⏱️ Timeout superato → forzo annaffiatura e skip_pred = True")
@@ -155,3 +199,136 @@ class WateringManagement(BaseService):
             "hours": [h["time"] for h in selected],
             "location": self.location
         }
+    
+
+
+class GardenHistoryService(BaseService):
+    """
+    Analizza lo storico di umidità e luce per ciascuna pianta nel giardino
+    e restituisce: max/min con timestamp, media, deviazione standard ecc.
+    Può restituire tutto il giardino o solo una pianta specifica.
+    """
+    def __init__(self):
+        super().__init__()
+    def execute(self, data: Dict, range: str = "giorno", plant_name: Optional[str] = None) -> Union[List[Dict], Dict]:
+        if 'digital_replicas' not in data:
+            raise ValueError("Digital Twin privo di digital_replicas")
+
+        now = datetime.utcnow()
+        if range == "giorno":
+            start = now - timedelta(days=1)
+        elif range == "settimana":
+            start = now - timedelta(days=7)
+        elif range == "mese":
+            start = now - timedelta(days=30)
+        else:
+            raise ValueError(f"Intervallo '{range}' non supportato. Usa: giorno, settimana, mese")
+
+        end = now
+
+        if plant_name:
+            dr = next(
+                (dr for dr in data.get("digital_replicas", [])
+                 if dr.get("type") == "plant" and dr.get("profile", {}).get("name", "").lower() == plant_name.lower()),
+                None
+            )
+            if not dr:
+                return {"error": f"Nessuna pianta trovata con nome '{plant_name}'"}
+            drs = [dr]
+        else:
+            drs = [dr for dr in data['digital_replicas'] if dr['type'] == 'plant']
+
+        results = []
+
+        for dr in drs:
+            name = dr.get("profile", {}).get("name", dr.get("_id", "unknown"))
+            measurements = dr.get("data", {}).get("measurements", [])
+            valid = [m for m in measurements if start <= datetime.fromisoformat(m["timestamp"]) <= end]
+
+            hums = [m for m in valid if m['type'] == 'humidity']
+            lights = [m for m in valid if m['type'] == 'light']
+
+            plant_stats = {
+                "plant": name,
+                "humidity": {},
+                "light": {},
+                "measurements": valid if plant_name else None
+            }
+
+            if hums:
+                hum_values = [m['value'] for m in hums]
+                max_h = max(hums, key=lambda m: m['value'])
+                min_h = min(hums, key=lambda m: m['value'])
+                plant_stats["humidity"] = {
+                    "max": max_h['value'],
+                    "max_time": max_h['timestamp'],
+                    "min": min_h['value'],
+                    "min_time": min_h['timestamp'],
+                    "mean": statistics.mean(hum_values),
+                    "std": statistics.stdev(hum_values) if len(hum_values) > 1 else 0
+                }
+
+            if lights:
+                light_values = [m['value'] for m in lights]
+                plant_stats["light"] = {
+                    "mean": statistics.mean(light_values),
+                    "max": max(light_values),
+                    "min": min(light_values),
+                    "std": statistics.stdev(light_values) if len(light_values) > 1 else 0
+                }
+
+            if plant_name:
+                return plant_stats
+            results.append(plant_stats)
+
+        return results
+
+
+class GardenStatusService(BaseService):
+    """
+    Ritorna lo stato attuale (ultima umidità e luce) di tutte le piante nel DT
+    o solo di una specifica pianta se specificata.
+    """
+    def __init__(self):
+        super().__init__()
+    def execute(self, data: Dict, plant_name: Optional[str] = None) -> Union[List[Dict], Dict]:
+        if plant_name:
+            dr = next(
+                (dr for dr in data.get("digital_replicas", [])
+                 if dr.get("type") == "plant" and dr.get("profile", {}).get("name", "").lower() == plant_name.lower()),
+                None
+            )
+            if not dr:
+                return {"error": f"Nessuna pianta trovata con nome '{plant_name}'"}
+            drs = [dr]
+        else:
+            drs = [dr for dr in data.get("digital_replicas", []) if dr.get("type") == "plant"]
+
+        results = []
+        for dr in drs:
+            name = dr.get("profile", {}).get("name", dr.get("_id"))
+            measures = dr.get("data", {}).get("measurements", [])
+
+            latest_h = None
+            latest_l = None
+
+            for m in sorted(measures, key=lambda x: x["timestamp"], reverse=True):
+                if m["type"] == "humidity" and not latest_h:
+                    latest_h = m
+                if m["type"] == "light" and not latest_l:
+                    latest_l = m
+                if latest_h and latest_l:
+                    break
+
+            plant_status = {
+                "plant": name,
+                "humidity": latest_h["value"] if latest_h else None,
+                "light": latest_l["value"] if latest_l else None,
+                "last_updated": latest_h["timestamp"] if latest_h else latest_l["timestamp"] if latest_l else None
+            }
+
+            if plant_name:
+                return plant_status
+            results.append(plant_status)
+
+        return results

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import random
 import time
 
-PLANT_ID = "PL0"
+PLANT_ID = "PL3"
 NUM_GIORNI = 1
 MISURE_AL_GIORNO = 2
 PAUSA = 0.1

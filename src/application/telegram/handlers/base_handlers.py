@@ -20,6 +20,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/help – Mostra questo messaggio di aiuto\n"
             "/listplants – Elenca le tue piante registrate\n"
             "/create_plant – Crea una nuova pianta\n"
+            "/create_garden - Crea un nuovo giardino\n"
             "/update_plant – Modifica i dati di una pianta\n"
             "/delete_plant – Elimina una pianta\n"
             "/setlocation – Invia la posizione GPS\n"

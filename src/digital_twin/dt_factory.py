@@ -79,6 +79,8 @@ class DTFactory:
         """
         return {
             "WateringManagement": "src.services.plant_service",
+            "GardenStatusService": "src.services.plant_service",
+            "GardenHistoryService": "src.services.plant_service"
         }
 
     def add_service(

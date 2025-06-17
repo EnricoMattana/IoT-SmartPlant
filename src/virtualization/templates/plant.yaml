@@ -5,7 +5,9 @@ schemas:
     profile:
       name: str
       owner_id: str
+      garden_id: str
       description: str
+      preset: str
       outdoor: bool
       location: str
       auto_watering: bool
@@ -26,6 +28,7 @@ schemas:
         - _id
         - type
       profile:
+        - garden_id
         - name
         - owner_id
         - outdoor
@@ -40,6 +43,9 @@ schemas:
       type:
         type: str
     #profile
+      preset:
+        type: str
+        enum: ["1", "2", "3"]
       name:
         type: str
       owner_id:
@@ -52,7 +58,8 @@ schemas:
         type: bool
       auto_watering:
         type: bool
-
+      garden_id:
+        type: str
       measurements:
         type: List[Dict]
         item_constraints:
@@ -63,6 +70,8 @@ schemas:
             timestamp: datetime
 
     initialization:
+      profile:
+        preset: "2"
       metadata:
         status: "active"
         last_warning_ts: null

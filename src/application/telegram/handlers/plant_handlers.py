@@ -9,8 +9,8 @@ from src.application.telegram.handlers.login_handlers import is_authenticated, g
 # Fasi della conversazione per aggiornamento pianta 
 ASK_PLANT_NAME, ASK_FIELD, ASK_NEW_VALUE = range(3)
 # conversazione /create_plant2
-ASK_NEW_PLANT_ID, ASK_NEW_PLANT_NAME, ASK_CITY_AND_IO, ASK_AUTOWATER = range(3, 7)
-
+ASK_NEW_PLANT_ID, ASK_NEW_PLANT_NAME, ASK_CITY_AND_IO, ASK_GARDEN_SELECTION, ASK_AUTOWATER, ASK_PRESET = range(3,9)
+ASK_GARDEN_CONFIRM = 9
 
 async def update_plant_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 🔒  Authentication check
@@ -179,75 +179,47 @@ async def list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-
-# ──────────────────────────────────────────────────────────────
-# STEP 1  ▸  ask for a unique plant‑ID  (unchanged)
-# ──────────────────────────────────────────────────────────────
 async def create_plant2_start(update, context):
-    if not is_authenticated(update.effective_user.id):
+    telegram_id = update.effective_user.id
+    if not is_authenticated(telegram_id):
         await update.message.reply_text("❌ Devi prima fare il login.")
         return ConversationHandler.END
+
+    user = get_logged_user(telegram_id)
+    gardens = user.get("data", {}).get("owned_gardens", [])
+    if not gardens:
+        await update.message.reply_text("🌱 Prima di aggiungere una pianta, devi creare almeno un giardino usando /create_garden.")
+        return ConversationHandler.END
+
+    context.user_data["user_db"] = user
+    context.user_data["gardens"] = gardens
 
     await update.message.reply_text("🆕 Inserisci l’ID univoco per la pianta:")
     return ASK_NEW_PLANT_ID
 
-
-# ──────────────────────────────────────────────────────────────
-# STEP 2  ▸  ask for the plant name  (unchanged)
-# ──────────────────────────────────────────────────────────────
+# STEP 2
 async def create_plant2_ask_name(update, context):
     context.user_data["new_plant_id"] = update.message.text.strip()
     await update.message.reply_text("✏️ Quale nome vuoi dare alla pianta?")
     return ASK_NEW_PLANT_NAME
 
-
-# ──────────────────────────────────────────────────────────────
-# STEP 3  ▸  ask for BOTH city and indoor/outdoor  (new logic)
-# ──────────────────────────────────────────────────────────────
+# STEP 3
 async def create_plant2_ask_city_and_io(update, context):
-    """
-    Expect a single line like:
-        'Milan outdoor'
-        'Cagliari indoor'
-    Parse it into:
-        location = 'Milan'          # city / free text
-        outdoor  = True / False     # bool
-    """
     context.user_data["plant_name"] = update.message.text.strip()
-
     await update.message.reply_text(
-        "📍 Inserisci *città* e se la pianta è *indoor* o *outdoor*.\n"
-        "Esempi:\n"
-        "`Milan outdoor`\n"
-        "`Cagliari indoor`",
-        parse_mode="Markdown",
+        "📍 Inserisci *città* e se la pianta è *indoor* o *outdoor* (es: `Milano outdoor`)",
+        parse_mode="Markdown"
     )
     return ASK_CITY_AND_IO
 
-
-# ──────────────────────────────────────────────────────────────
-# STEP 3b ▸  validate & store city + io
-# ──────────────────────────────────────────────────────────────
+# STEP 3b
 async def parse_city_and_io(update, context):
-    """
-    Split the message; last token must be 'indoor' or 'outdoor'.
-    Everything before it is considered the city / location string.
-    """
     text = update.message.text.strip()
-
-    if not text:
-        await update.message.reply_text("⚠️ Il testo non può essere vuoto.")
-        return ASK_CITY_AND_IO
-
-    # Separate by whitespace – city might contain spaces (‘San Benedetto del Tronto outdoor’)
     parts = text.split()
     io_token = parts[-1].lower()
 
     if io_token not in ("indoor", "outdoor"):
-        await update.message.reply_text(
-            "⚠️ Specifica *indoor* o *outdoor* alla fine.\nEsempio: `Milan outdoor`",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("⚠️ Scrivi la città seguita da 'indoor' o 'outdoor'.")
         return ASK_CITY_AND_IO
 
     city = " ".join(parts[:-1]).strip()
@@ -255,74 +227,115 @@ async def parse_city_and_io(update, context):
         await update.message.reply_text("⚠️ Inserisci anche il nome della città.")
         return ASK_CITY_AND_IO
 
-    # Save both pieces in user_data for the final step
-    context.user_data["location"] = city                 # ex. 'Milan'
+    context.user_data["location"] = city
     context.user_data["outdoor_bool"] = io_token == "outdoor"
 
-    # Move on to the auto‑watering question
+    # Se più giardini, chiedi scelta
+    gardens = context.user_data.get("gardens", [])
+    if len(gardens) > 1:
+        db = current_app.config["DB_SERVICE"]
+        _, pretty_dict = get_user_gardens(db, update.effective_user.id)
+        context.user_data["garden_choices"] = pretty_dict
+        garden_list = "\n".join(f"• {name}" for name in pretty_dict.keys())
+        await update.message.reply_text(f"🏡 In quale giardino vuoi inserire la pianta?\n{garden_list}\n\nScrivi il nome esatto.")
+        return ASK_GARDEN_SELECTION
+
+    # Altrimenti selezione automatica
+    dt_id = list(gardens[0].keys())[0]
+    context.user_data["target_dt_id"] = dt_id
     await update.message.reply_text("💧 Attivare l’*auto‑watering*? (sì/no)", parse_mode="Markdown")
     return ASK_AUTOWATER
 
+# STEP 4: Garden selection
+async def create_plant2_ask_garden(update, context):
+    reply = update.message.text.strip()
+    choices = context.user_data.get("garden_choices", {})
 
-# ──────────────────────────────────────────────────────────────
-# STEP 4 ▸  finish creation  (minor edits only)
-# ──────────────────────────────────────────────────────────────
+    for name, dt_id in choices.items():
+        if reply.lower() == name.lower():
+            context.user_data["target_dt_id"] = dt_id
+            await update.message.reply_text("💧 Attivare l’*auto‑watering*? (sì/no)", parse_mode="Markdown")
+            return ASK_AUTOWATER
+
+    await update.message.reply_text("⚠️ Giardino non trovato. Riprova.")
+    return ASK_GARDEN_SELECTION
+
+# STEP 5: Auto watering
+async def ask_preset_handler(update, context):
+    response = update.message.text.strip().lower()
+    context.user_data["auto_watering"] = response in ("si", "sì", "yes", "y")
+
+    await update.message.reply_text(
+                '''🌿 Che tipo di pianta è?
+        1. Resilient (poca acqua)
+        2. Normal (normale)
+        3. Fragile (molta acqua)
+
+        Scrivi 1, 2 o 3.'''
+        )
+    
+    return ASK_PRESET
+
+# STEP 6: Fine
 async def create_plant2_finish(update, context):
-    autowater = update.message.text.strip().lower() in ("si", "sì", "yes", "y")
+    preset_map = {
+        "1": "resilient",
+        "2": "normal",
+        "3": "fragile"
+    }
+    preset_input = update.message.text.strip()
+    preset = preset_map.get(preset_input, "standard")
+
+    db = current_app.config['DB_SERVICE']
+    dr_factory = current_app.config['DR_FACTORY']
+    dt_factory = current_app.config['DT_FACTORY']
 
     plant_id   = context.user_data["new_plant_id"]
     plant_name = context.user_data["plant_name"]
-    location   = context.user_data["location"]          # city string
-    outdoor    = context.user_data["outdoor_bool"]      # bool
-    telegram_id = update.effective_user.id
+    location   = context.user_data["location"]
+    outdoor    = context.user_data["outdoor_bool"]
+    autowater  = context.user_data["auto_watering"]
+    dt_id      = context.user_data["target_dt_id"]
+    user       = context.user_data["user_db"]
 
-    db = current_app.config['DB_SERVICE']
-
-    # --- (same validation & DR creation as before) -------------------------
     if db.get_dr("plant", plant_id):
         await update.message.reply_text("⚠️ Esiste già una pianta con questo ID.")
         return ConversationHandler.END
 
-    user = get_logged_user(telegram_id)
-    if not user:
-        await update.message.reply_text("Errore interno: utente non trovato.")
-        return ConversationHandler.END
-
-    dr_factory = current_app.config['DR_FACTORY']
     new_plant = dr_factory.create_dr("plant", {
         "profile": {
-            "name":          plant_name,
-            "owner_id":      user["_id"],
-            "description":   "",
-            "species":       "unknown",
-            "location":      location,      # city
-            "outdoor":       outdoor,       # bool
+            "name": plant_name,
+            "owner_id": user["_id"],
+            "garden_id": dt_id,
+            "description": "",
+            "preset": preset,
+            "location": location,
+            "outdoor": outdoor,
             "auto_watering": autowater
         },
         "metadata": {},
         "data": {}
     })
+
+
     new_plant["_id"] = plant_id
     db.save_dr("plant", new_plant)
 
-    # attach plant to user
     user["data"].setdefault("owned_plants", []).append(plant_id)
     db.update_dr("user", user["_id"], user)
 
-   # 🧠 Crea Digital Twin + servizio WateringManagement
-    dt_factory = current_app.config['DT_FACTORY']
-    dt_id = dt_factory.create_dt(name=f"DT_plant_{plant_id}")
     dt_factory.add_digital_replica(dt_id=dt_id, dr_type="plant", dr_id=plant_id)
+    config = {"api_key": "05418e63cb684a3a8f2135050250205", "location": location, "preset": preset}
+    garden_name = None
+    for g in user["data"].get("owned_gardens", []):
+        if dt_id in g:
+            garden_name = g[dt_id]
+            break
 
-    # ➕ Aggiungi sempre WateringManagement con config base
-    config = {
-        "api_key": "05418e63cb684a3a8f2135050250205",
-        "location": location
-    }
-    dt_factory.add_service(dt_id, "WateringManagement", config)
-
-    await update.message.reply_text("✅ Pianta creata con successo!")
+    await update.message.reply_text(
+        f"✅ Pianta '{plant_name}' creata e inserita nel giardino: <b>{garden_name}</b>.", parse_mode="HTML")
     return ConversationHandler.END
+
 
 
 
@@ -375,27 +388,6 @@ def get_user_plants(db, telegram_id):
     return plant_dict, pretty_dict
 
 
-
-
-
-
-#   /setlocation  -> invia tastiera con bottone "Condividi posizione"
-async def setlocation(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    kb = [[KeyboardButton("📍 Invia posizione", request_location=True)]]
-    await update.message.reply_text(
-        "Condividi la posizione del vaso:",
-        reply_markup=ReplyKeyboardMarkup(kb, one_time_keyboard=True, resize_keyboard=True))
-
-
-async def recv_location(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    loc = update.message.location
-    lat, lon = round(loc.latitude, 5), round(loc.longitude, 5)
-    await update.message.reply_text(
-        f"✅ Posizione salvata: {lat}, {lon}\n"
-        "Le prossime previsioni useranno queste coordinate.")
-    
-
-
 async def sync_dt_with_plant_update(plant: dict, plant_id: str, send_msg: Callable):
     """
     Aggiorna solo il campo 'location' del servizio WateringManagement
@@ -406,7 +398,6 @@ async def sync_dt_with_plant_update(plant: dict, plant_id: str, send_msg: Callab
         plant_id: ID della pianta
         send_msg: funzione async per rispondere via Telegram
     """
-    from flask import current_app
     dt_factory = current_app.config["DT_FACTORY"]
 
     dts = dt_factory.list_dts()
@@ -443,7 +434,6 @@ async def delete_plant_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if not is_authenticated(telegram_id):
         await update.message.reply_text("❌ Devi prima fare il login.")
         return
-
     if not context.args:
         await update.message.reply_text("📛 Devi scrivere il nome della pianta da eliminare.\nEsempio: `/delete_plant basilico`", parse_mode="Markdown")
         return
@@ -490,3 +480,240 @@ async def delete_plant_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     await update.message.reply_text(f"🗑️ Pianta *{plant_name_input}* eliminata con successo.", parse_mode="Markdown")
+
+
+# DT Garden Management
+def get_user_gardens(db, telegram_id):
+    user = get_logged_user(telegram_id)
+    if not user:
+        return {}, {}
+
+    gardens = user.get("data", {}).get("owned_gardens", [])
+    dt_list = db.db["digital_twins"].find({"_id": {"$in": [list(g.keys())[0] for g in gardens]}})
+
+    garden_dict = {}
+    pretty_dict = {}
+
+    for dt in dt_list:
+        dt_id = dt["_id"]
+        name = dt.get("name", "Unnamed Garden")
+        garden_dict[name.lower().strip()] = dt_id
+        pretty_dict[name] = dt_id
+
+    return garden_dict, pretty_dict
+
+async def create_garden_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if not is_authenticated(user_id):
+        await update.message.reply_text("❌ Devi essere autenticato per creare un giardino.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("ℹ️ Usa il comando così: /create_garden <nome_giardino>")
+        return
+
+    garden_name = context.args[0].strip()
+    db = current_app.config["DB_SERVICE"]
+    dt_factory = current_app.config["DT_FACTORY"]
+
+    user = get_logged_user(user_id)
+    if not user:
+        await update.message.reply_text("Errore interno: utente non trovato.")
+        return
+
+    # Verifica che non esista già un giardino con questo nome per questo utente
+    user_gardens = user["data"].get("owned_gardens", [])
+    garden_names = [v for g in user_gardens for v in g.values()]  # estrai solo i nomi
+    if garden_name in garden_names:
+        await update.message.reply_text(f"⚠️ Hai già un giardino chiamato '{garden_name}'.")
+        return
+
+    # Crea il Digital Twin
+    dt_id = dt_factory.create_dt(name=garden_name, description=f"Giardino dell'utente {user['_id']}")
+    dt_factory.add_service(dt_id, "WateringManagement")
+    dt_factory.add_service(dt_id, "GardenHistoryService")
+    dt_factory.add_service(dt_id, "GardenStatusService")
+    # Aggiungi dizionario {dt_id: garden_name} alla lista
+    user["data"].setdefault("owned_gardens", []).append({dt_id: garden_name})
+    db.update_dr("user", user["_id"], user)
+
+    await update.message.reply_text(f"🌱 Giardino '{garden_name}' creato con successo!")
+
+
+async def list_gardens_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db = current_app.config["DB_SERVICE"]
+    telegram_id = update.effective_user.id
+    _, pretty_dict = get_user_gardens(db, telegram_id)
+
+    if not pretty_dict:
+        await update.message.reply_text("⚠️ Nessun giardino trovato.")
+        return
+
+    text = "<b>🌿 I tuoi giardini:</b>\n" + "\n".join(f"• {name}" for name in pretty_dict.keys())
+    await update.message.reply_text(text, parse_mode="HTML")
+
+
+
+async def move_plant_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db = current_app.config["DB_SERVICE"]
+    dt_factory = current_app.config["DT_FACTORY"]
+    telegram_id = update.effective_user.id
+
+    if not is_authenticated(telegram_id):
+        await update.message.reply_text("❌ Devi essere autenticato.")
+        return
+
+    if len(context.args) != 2:
+        await update.message.reply_text("ℹ️ Usa: /moveplant <nome_pianta> <nome_giardino>")
+        return
+
+    plant_name = context.args[0].strip().lower()
+    garden_name = context.args[1].strip().lower()
+
+    plant_dict, _ = get_user_plants(db, telegram_id)
+    garden_dict, _ = get_user_gardens(db, telegram_id)
+
+    if plant_name not in plant_dict:
+        await update.message.reply_text("⚠️ Pianta non trovata.")
+        return
+    if garden_name not in garden_dict:
+        await update.message.reply_text("⚠️ Giardino non trovato.")
+        return
+
+    plant_id = plant_dict[plant_name]
+    new_garden_dt = dt_factory.get_dt(garden_dict[garden_name])
+
+    # Rimuovi la DR da tutti gli altri DT
+    all_dts = dt_factory.list_dts()
+    for dt in all_dts:
+        if any(dr["id"] == plant_id and dr["type"] == "plant" for dr in dt["digital_replicas"]):
+            db.db["digital_twins"].update_one(
+                {"_id": dt["_id"]},
+                {"$pull": {"digital_replicas": {"id": plant_id, "type": "plant"}}}
+            )
+
+    # Aggiungi la DR al nuovo DT
+    dt_factory.add_digital_replica(new_garden_dt["_id"], "plant", plant_id)
+
+    await update.message.reply_text(f"🔁 Pianta spostata nel giardino '{garden_name}'.")
+
+
+async def garden_info_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db = current_app.config["DB_SERVICE"]
+    dt_factory = current_app.config["DT_FACTORY"]
+    telegram_id = update.effective_user.id
+
+    if not is_authenticated(telegram_id):
+        await update.message.reply_text("❌ Devi essere autenticato.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("ℹ️ Usa: /gardeninfo <nome_giardino>")
+        return
+
+    garden_name = context.args[0].strip().lower()
+    garden_dict, _ = get_user_gardens(db, telegram_id)
+
+    if garden_name not in garden_dict:
+        await update.message.reply_text("⚠️ Giardino non trovato.")
+        return
+
+    dt = dt_factory.get_dt(garden_dict[garden_name])
+    plant_ids = [dr["id"] for dr in dt["digital_replicas"] if dr["type"] == "plant"]
+
+    if not plant_ids:
+        await update.message.reply_text("🌱 Questo giardino non contiene piante.")
+        return
+
+    plants = db.query_drs("plant", {"_id": {"$in": plant_ids}})
+    names = [p["profile"]["name"] for p in plants]
+    text = "<b>🌿 Piante nel giardino:</b>\n" + "\n".join(f"• {n}" for n in names)
+
+    await update.message.reply_text(text, parse_mode="HTML")
+
+
+async def delete_garden_init(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    telegram_id = update.effective_user.id
+    if not is_authenticated(telegram_id):
+        await update.message.reply_text("❌ Devi essere autenticato.")
+        return ConversationHandler.END
+
+    if not context.args:
+        await update.message.reply_text("ℹ️ Usa: /delete_garden <nome>")
+        return ConversationHandler.END
+
+    garden_name = context.args[0].strip().lower()
+    db = current_app.config["DB_SERVICE"]
+    garden_dict, pretty_dict = get_user_gardens(db, telegram_id)
+
+    if garden_name not in garden_dict:
+        await update.message.reply_text("⚠️ Giardino non trovato.")
+        return ConversationHandler.END
+
+    dt_id = garden_dict[garden_name]
+    context.user_data["target_dt_id"] = dt_id
+    context.user_data["target_garden_name"] = [
+        k for k, v in pretty_dict.items() if v == dt_id
+    ][0]
+
+    await update.message.reply_text(
+        f"⚠️ Eliminerai anche tutte le piante contenute nel giardino '{context.user_data['target_garden_name']}'.\n"
+        f"Digita <b>SI</b> per confermare.",
+        parse_mode="HTML",
+    )
+    return ASK_GARDEN_CONFIRM
+
+
+async def delete_garden_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    reply = update.message.text.strip().lower()
+    if reply != "si":
+        await update.message.reply_text("❌ Eliminazione annullata.")
+        return ConversationHandler.END
+
+    telegram_id = update.effective_user.id
+    db = current_app.config["DB_SERVICE"]
+    dt_factory = current_app.config["DT_FACTORY"]
+
+    dt_id = context.user_data["target_dt_id"]
+    garden_name = context.user_data["target_garden_name"]
+
+    # 1. Recupera il DT
+    dt = dt_factory.get_dt(dt_id)
+    digital_replicas = dt.get("digital_replicas", [])
+
+    # 2. Estrai tutte le plant_id da eliminare
+    plant_ids_to_delete = []
+    for replica in digital_replicas:
+        if replica["type"] == "plant":
+            plant_ids_to_delete.append(replica["id"])
+
+    # 3. Elimina le DR di tipo "plant"
+    for plant_id in plant_ids_to_delete:
+        db.delete_dr("plant", plant_id)
+
+    # 4. Elimina il DT
+    db.db["digital_twins"].delete_one({"_id": dt_id})
+
+    # 5. Aggiorna il profilo utente
+    user = get_logged_user(telegram_id)
+
+    # Rimuovi il garden dalla lista
+    updated_gardens = []
+    for entry in user["data"].get("owned_gardens", []):
+        if dt_id not in entry:
+            updated_gardens.append(entry)
+    user["data"]["owned_gardens"] = updated_gardens
+
+    # Rimuovi le piante eliminate dalla lista
+    updated_plants = []
+    for plant_id in user["data"].get("owned_plants", []):
+        if plant_id not in plant_ids_to_delete:
+            updated_plants.append(plant_id)
+    user["data"]["owned_plants"] = updated_plants
+
+    # Salva utente aggiornato
+    db.update_dr("user", user["_id"], user)
+
+    await update.message.reply_text(f"🗑️ Giardino '{garden_name}' e tutte le sue piante sono stati eliminati.")
+    return ConversationHandler.END

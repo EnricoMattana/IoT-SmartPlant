@@ -10,9 +10,9 @@ schemas:
       created_at: datetime
       updated_at: datetime
       status: str
-
   entity:
     data:
+      owned_gardens: List[dict]
       owned_plants: List[str]
       last_login: datetime
 
@@ -30,22 +30,25 @@ schemas:
         - status
 
     type_constraints:
-      profile.username:
+      username:
         type: str
-      profile.password:
+      password:
         type: str
-      profile.telegram_id:
+      telegram_id:
         type: int
-      metadata.status:
+      status:
         type: str
         enum: ["active", "inactive", "suspended"]
-      data.owned_plants:
+      owned_gardens:
+        type: List[dict]
+      owned_plants:
         type: List[str]
-      data.last_login:
+      last_login:
         type: datetime
-
-  initialization:
-    metadata:
-      status: "active"
-    data:
+    
+    initialization:
+      metadata:
+        status: "active"
       owned_plants: []
+      owned_gardens: []
+      last_login: null

@@ -177,14 +177,24 @@ class SmartPlantMQTTHandler:
 
         # 5️⃣ chiama handle_measurement SOLO sull’ultima misura di umidità
         last_humidity = None
+        last_light = None
+
+        # Scansiona le misure al contrario per trovare le ultime per tipo
         for m in reversed(measurements):
-            if m["type"] == "humidity":
+            if m["type"] == "humidity" and last_humidity is None:
                 last_humidity = m
-                break
- 
+            elif m["type"] == "light" and last_light is None:
+                last_light = m
+            if last_humidity and last_light:
+                break  # possiamo uscire non appena le abbiamo trovate entrambe
+
+        # Esegui il controllo separato per ciascuna
         if last_humidity:
             handle_measurement(plant_id, last_humidity, updated_plant)
-            
+
+        if last_light:
+            handle_measurement(plant_id, last_light, updated_plant)
+                    
     def _add_measurement(self, plant_id: str, measurement: dict):
         try:
             db_service = current_app.config['DB_SERVICE']

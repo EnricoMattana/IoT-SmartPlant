@@ -63,6 +63,7 @@ class FlaskServer:
         self.app.config["DB_SERVICE"] = db_service
         self.app.config["DT_FACTORY"] = dt_factory
         self.app.config["DR_FACTORY"] = dr_factory
+        self.app.config["DR_FACTORY_USER"]=DRFactory("src/virtualization/templates/user.yaml")
 
     def _register_blueprints(self):
         """Register all API blueprints"""
