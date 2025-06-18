@@ -15,33 +15,43 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_authenticated(user_id):
         help_text = (
-            "<b>🤖 Comandi disponibili (utente autenticato):</b>\n"
-            "/start – Avvia il bot\n"
-            "/help – Mostra questo messaggio di aiuto\n"
-            "/listplants – Elenca le tue piante registrate\n"
-            "/create_plant – Crea una nuova pianta\n"
-            "/create_garden - Crea un nuovo giardino\n"
-            "/update_plant – Modifica i dati di una pianta\n"
+            "<b>👤 Account & Sessione</b>\n"
+            "/logout – Esci dal tuo account\n"
+
+            "<b>🏡 Gestione Giardini</b>\n"
+            "/create_garden – Crea un giardino\n"
+            "/listgardens – Elenca i tuoi giardini\n"
+            "/delete_garden – Elimina un giardino (se vuoto)\n"
+            "/gardeninfo – Info piante nel giardino\n\n"
+
+
+
+            "<b>🌿 Gestione Piante</b>\n"
+            "/listplants – Elenca le tue piante\n"
+            "/create_plant – Aggiungi una nuova pianta\n"
+            "/update_plant – Modifica info pianta\n"
             "/delete_plant – Elimina una pianta\n"
-            "/setlocation – Invia la posizione GPS\n"
-            "/calibrate_dry – Calibra il sensore a secco\n"
-            "/calibrate_wet – Calibra il sensore a bagnato\n"
-            "/water – Innaffia una pianta\n"
-            "/status – Stato attuale delle tue piante\n"
-            "/analytics – Mostra grafici e dati\n"
-            "/logout – Esci dal tuo account"
+            "/moveplant – Sposta pianta in altro giardino\n"
+            "/calibrate_dry – Calibrazione a secco\n"
+            "/calibrate_wet – Calibrazione a bagnato\n"
+            "/water – Annaffia una pianta\n\n"
+
+            "<b>📊 Dati e Stato</b>\n"
+            "/status – Stato di una pianta\n"
+            "/analytics – Statistiche pianta: <code>/analytics nome giorni</code>\n"
+            "/garden_status – Stato generale del giardino\n"
+            "/garden_analytics – Statistiche giardino: <code>/garden_analytics giorni</code>\n\n"
         )
     else:
         help_text = (
             "<b>🔐 Comandi disponibili (non autenticato):</b>\n"
             "/start – Avvia il bot\n"
-            "/help – Mostra questo messaggio di aiuto\n"
-            "/register – Crea un nuovo account: <code>/register username password</code>\n"
-            "/login – Accedi al tuo account: <code>/login username password</code>"
+            "/help – Mostra questo messaggio\n"
+            "/register – Registrati: <code>/register username password</code>\n"
+            "/login – Accedi: <code>/login username password</code>"
         )
 
     await update.message.reply_text(help_text, parse_mode="HTML")
-
 # --- Echo handler ---
 async def echo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Echo handler that replies with the same message received"""

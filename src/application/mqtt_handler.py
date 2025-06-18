@@ -6,7 +6,7 @@ import logging
 import time
 from threading import Thread, Event
 import uuid
-from src.application.utils import handle_measurement
+from src.application.utils import handle_measurement, handle_notification
 
 
 logger = logging.getLogger(__name__)
@@ -35,14 +35,13 @@ class SmartPlantMQTTHandler:
         config = self.app.config.get('MQTT_CONFIG', {})
         self.broker = config.get('broker')
         self.port = config.get('port', 8883)
-        self.topic = config.get('topic', 'smartplant/+/measurements')
+        self.topic = config.get('topic')
 
         self.client.tls_set()
         self.client.username_pw_set(config.get('username'), config.get('password'))
 
         print(f"MQTT Setup - Broker: {self.broker}, Port: {self.port}")
-        print(f"Topic:  {self.topic}")
-
+        
     def start(self):
         """Start MQTT client in non-blocking way"""
         try:
@@ -94,8 +93,9 @@ class SmartPlantMQTTHandler:
             self.connected = True
             logger.info("Connected to MQTT broker")
             print("✅ Connected to MQTT broker")
-            client.subscribe(self.topic)
-            logger.info(f"Subscribed to {self.topic}")
+            for topic, qos in self.topic:
+                client.subscribe(topic, qos)
+                logger.info(f"Subscribed to {topic} with QoS {qos}")
         else:
             self.connected = False
             logger.error(f"Failed to connect to MQTT broker with code: {rc}")
@@ -118,28 +118,41 @@ class SmartPlantMQTTHandler:
                 logger.warning(f"Invalid topic format: {msg.topic}")
                 return
 
-            _, plant_id, _ = parts
+            _, plant_id, argument = parts
 
-            try:
-                payload = json.loads(msg.payload.decode())
-            except Exception as e:
-                logger.error(f"Invalid JSON payload: {e}")
-                return
+            if argument=="measurement":
+                try:
+                    payload = json.loads(msg.payload.decode())
+                except Exception as e:
+                    logger.error(f"Invalid JSON payload: {e}")
+                    return
 
-            # Supporta sia dict singolo che lista di dict
-            measurements = []
-            if isinstance(payload, dict):
-                measurements = [payload]
-            elif isinstance(payload, list):
-                measurements = payload
-            else:
-                logger.error("Payload must be a dict or list of dicts")
-                return
+                # Supporta sia dict singolo che lista di dict
+                measurements = []
+                if isinstance(payload, dict):
+                    measurements = [payload]
+                elif isinstance(payload, list):
+                    measurements = payload
+                else:
+                    logger.error("Payload must be a dict or list of dicts")
+                    return
 
-           
-            with self.app.app_context():
-                self._add_measurements_batch(plant_id, measurements)
             
+                with self.app.app_context():
+                    self._add_measurements_batch(plant_id, measurements)
+            
+            elif argument=="errors":
+                db_service = self.app.config["DB_SERVICE"]
+                # recupera la Digital Replica
+                plant = db_service.get_dr("plant", plant_id)
+                payload = json.loads(msg.payload.decode())
+                if payload.get("code") == "pump":
+                    data = {
+                        "delta": payload.get("delta"),
+                        "timestamp": payload.get("timestamp")
+                    }
+                with self.app.app_context():
+                    handle_notification(plant_id, data, plant, db_service, kind="error")
         except Exception as e:
             logger.error(f"Error processing incoming MQTT message: {e}")
     
@@ -195,32 +208,6 @@ class SmartPlantMQTTHandler:
         if last_light:
             handle_measurement(plant_id, last_light, updated_plant)
                     
-    def _add_measurement(self, plant_id: str, measurement: dict):
-        try:
-            db_service = current_app.config['DB_SERVICE']
-
-            plant = db_service.get_dr("plant", plant_id)
-            if not plant:
-                logger.error(f"Plant not found with ID: {plant_id}")
-                return
-
-            # 🔁 Converti timestamp se necessario
-            if isinstance(measurement.get("timestamp"), str):
-                try:
-                    measurement["timestamp"] = datetime.fromisoformat(measurement["timestamp"])
-                except Exception as e:
-                    logger.warning(f"Invalid timestamp format for plant {plant_id}: {e}")
-                    return
-
-            # 📥 Aggiungi misura al database
-            plant.setdefault("data", {})
-            plant["data"].setdefault("measurements", []).append(measurement)
-            db_service.update_dr("plant", plant_id, plant)
-            logger.info(f"Measurement added to plant {plant_id}")
-            handle_measurement(plant_id, measurement, plant)
-
-        except Exception as e:
-            logger.error(f"Error updating plant {plant_id}: {e}")
         
         
         

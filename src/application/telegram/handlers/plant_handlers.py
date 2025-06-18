@@ -147,11 +147,6 @@ async def update_plant_finish(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"✅ Aggiornamento completato: *{field}* → `{msg_val}`",
         parse_mode="Markdown"
     )
-    await sync_dt_with_plant_update(
-        plant=plant,
-        plant_id=plant_id,
-        send_msg=update.message.reply_text
-    )
 
     return ConversationHandler.END
 
@@ -284,7 +279,7 @@ async def create_plant2_finish(update, context):
         "3": "fragile"
     }
     preset_input = update.message.text.strip()
-    preset = preset_map.get(preset_input, "standard")
+    preset = preset_map.get(preset_input, "normal")
 
     db = current_app.config['DB_SERVICE']
     dr_factory = current_app.config['DR_FACTORY']
@@ -340,7 +335,7 @@ async def create_plant2_finish(update, context):
 
 
 async def cancel_create_plant2(update, context):
-    await update.message.reply_text("🚫 Creazione pianta annullata.")
+    await update.message.reply_text("🚫 Operazione Annullata")
     return ConversationHandler.END
 
 
@@ -353,7 +348,6 @@ async def universal_fallback(update, context):
         parse_mode="Markdown"
     )
     return ConversationHandler.END
-
 
 
 
@@ -388,52 +382,12 @@ def get_user_plants(db, telegram_id):
     return plant_dict, pretty_dict
 
 
-async def sync_dt_with_plant_update(plant: dict, plant_id: str, send_msg: Callable):
-    """
-    Aggiorna solo il campo 'location' del servizio WateringManagement
-    mantenendo inalterati gli altri parametri (es. soglie).
-
-    Args:
-        plant: DR aggiornato
-        plant_id: ID della pianta
-        send_msg: funzione async per rispondere via Telegram
-    """
-    dt_factory = current_app.config["DT_FACTORY"]
-
-    dts = dt_factory.list_dts()
-    for dt_data in dts:
-        for dr_ref in dt_data.get("digital_replicas", []):
-            if dr_ref["id"] == plant_id and dr_ref["type"] == "plant":
-                dt_id = dt_data["_id"]
-                try:
-                    dt = dt_factory.get_dt(dt_id)
-                    services = dt.get("services", [])
-                    old_config = {}
-
-                    for s in services:
-                        if s["name"] == "WateringManagement":
-                            old_config = s.get("config", {})
-                            break
-
-                    # 🔁 Aggiorna solo il campo location
-                    new_config = old_config.copy()
-                    new_config["location"] = plant["profile"].get("location", "Milan")
-
-                    dt_factory.remove_service(dt_id, "WateringManagement")
-                    dt_factory.add_service(dt_id, "WateringManagement", new_config)
-
-                    await send_msg("✅ Configurazione WateringManagement aggiornata (solo location).")
-
-                except Exception as e:
-                    await send_msg(f"⚠️ Errore durante aggiornamento DT: {str(e)}")
-                return
-
-
 async def delete_plant_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = update.effective_user.id
     if not is_authenticated(telegram_id):
         await update.message.reply_text("❌ Devi prima fare il login.")
         return
+
     if not context.args:
         await update.message.reply_text("📛 Devi scrivere il nome della pianta da eliminare.\nEsempio: `/delete_plant basilico`", parse_mode="Markdown")
         return
@@ -449,18 +403,11 @@ async def delete_plant_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(f"❌ Pianta '{plant_name_input}' non trovata tra le tue.")
         return
 
-    # 1️⃣ Elimina il Digital Twin associato
-    try:
-        dts = dt_factory.list_dts()
-        for dt in dts:
-            for dr in dt.get("digital_replicas", []):
-                if dr["type"] == "plant" and dr["id"] == plant_id:
-                    dt_id = dt["_id"]
-                    dt_collection = db.db["digital_twins"]
-                    dt_collection.delete_one({"_id": dt_id})
-                    break
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ Errore nella rimozione del Digital Twin: {str(e)}")
+    # 1️⃣ Rimuovi la DR dal Digital Twin che la contiene
+    dt = dt_factory.get_dt_by_plant_id(plant_id)
+    dt_id = dt["_id"]
+    dt_factory.remove_digital_replica(dt_id=dt_id, dr_id=plant_id)
+   
 
     # 2️⃣ Elimina la DR della pianta
     try:
@@ -531,7 +478,7 @@ async def create_garden_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Crea il Digital Twin
     dt_id = dt_factory.create_dt(name=garden_name, description=f"Giardino dell'utente {user['_id']}")
-    dt_factory.add_service(dt_id, "WateringManagement")
+    dt_factory.add_service(dt_id, "PlantManagement")
     dt_factory.add_service(dt_id, "GardenHistoryService")
     dt_factory.add_service(dt_id, "GardenStatusService")
     # Aggiungi dizionario {dt_id: garden_name} alla lista
@@ -582,9 +529,10 @@ async def move_plant_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     plant_id = plant_dict[plant_name]
-    new_garden_dt = dt_factory.get_dt(garden_dict[garden_name])
+    garden_id = garden_dict[garden_name]
+    new_garden_dt = dt_factory.get_dt(garden_id)
 
-    # Rimuovi la DR da tutti gli altri DT
+    # 🔁 Rimuovi la DR da tutti gli altri DT
     all_dts = dt_factory.list_dts()
     for dt in all_dts:
         if any(dr["id"] == plant_id and dr["type"] == "plant" for dr in dt["digital_replicas"]):
@@ -593,8 +541,13 @@ async def move_plant_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 {"$pull": {"digital_replicas": {"id": plant_id, "type": "plant"}}}
             )
 
-    # Aggiungi la DR al nuovo DT
+    # ➕ Aggiungi la DR al nuovo DT
     dt_factory.add_digital_replica(new_garden_dt["_id"], "plant", plant_id)
+
+    # 📝 Aggiorna anche il campo garden_id nel profilo della pianta
+    plant = db.get_dr("plant", plant_id)
+    plant["profile"]["garden_id"] = garden_id
+    db.update_dr("plant", plant_id, plant)
 
     await update.message.reply_text(f"🔁 Pianta spostata nel giardino '{garden_name}'.")
 
@@ -717,3 +670,95 @@ async def delete_garden_confirm(update: Update, context: ContextTypes.DEFAULT_TY
 
     await update.message.reply_text(f"🗑️ Giardino '{garden_name}' e tutte le sue piante sono stati eliminati.")
     return ConversationHandler.END
+
+
+async def garden_analytics_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    telegram_id = update.effective_user.id
+    if not is_authenticated(telegram_id):
+        await update.message.reply_text("❌ Devi prima fare il login.")
+        return
+
+    if len(context.args) != 1:
+        await update.message.reply_text("Usage: /garden_analytics <giorni_passati>\nEsempio: /garden_analytics 7")
+        return
+
+    try:
+        days = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("⚠️ Il numero di giorni deve essere un intero.")
+        return
+
+    db = current_app.config["DB_SERVICE"]
+    dt_factory = current_app.config["DT_FACTORY"]
+    user = get_logged_user(telegram_id)
+    gardens = user.get("data", {}).get("owned_gardens", [])
+
+    if not gardens:
+        await update.message.reply_text("⚠️ Nessun giardino trovato.")
+        return
+
+    if days <= 1:
+        range_name = "giorno"
+    elif days <= 7:
+        range_name = "settimana"
+    else:
+        range_name = "mese"
+
+    for dt_id, garden_name in gardens.items():
+        dt_instance = dt_factory.get_dt_instance(dt_id)
+        if not dt_instance:
+            continue
+
+        result = dt_instance.execute_service(
+            service_name="GardenHistoryService",
+            range=range_name
+        )
+
+        if not result:
+            await update.message.reply_text(f"⚠️ Nessun dato per il giardino '{garden_name}'.")
+            continue
+
+        msg = f"📊 Statistiche per il giardino *{garden_name}*:\n\n"
+        for plant in result:
+            msg += f"🌱 *{plant['plant']}*\n"
+            if plant.get("humidity"):
+                msg += f"💧 Umidità – min: {plant['humidity']['min']}%, max: {plant['humidity']['max']}%, media: {round(plant['humidity']['mean'], 1)}%\n"
+            if plant.get("light"):
+                msg += f"💡 Luce – min: {plant['light']['min']}, max: {plant['light']['max']}, media: {round(plant['light']['mean'], 1)}\n"
+            msg += "\n"
+
+        await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+async def garden_status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    telegram_id = update.effective_user.id
+    if not is_authenticated(telegram_id):
+        await update.message.reply_text("❌ Devi prima fare il login.")
+        return
+
+    db = current_app.config["DB_SERVICE"]
+    dt_factory = current_app.config["DT_FACTORY"]
+    user = get_logged_user(telegram_id)
+    gardens = user.get("data", {}).get("owned_gardens", {})
+
+    if not gardens:
+        await update.message.reply_text("⚠️ Nessun giardino trovato.")
+        return
+
+    for dt_id, garden_name in gardens.items():
+        dt_instance = dt_factory.get_dt_instance(dt_id)
+        if not dt_instance:
+            continue
+
+        result = dt_instance.execute_service("GardenStatusService")
+        if not result:
+            await update.message.reply_text(f"⚠️ Nessuna misura disponibile per il giardino '{garden_name}'.")
+            continue
+
+        msg = f"📡 Stato attuale del giardino *{garden_name}*:\n\n"
+        if "humidity" in result:
+            msg += f"💧 Umidità – media: {round(result['humidity']['mean'], 1)}%, sotto soglia: {result['humidity']['below_threshold']} piante\n"
+        if "light" in result:
+            msg += f"💡 Luce – media: {round(result['light']['mean'], 1)}, sotto soglia: {result['light']['below_threshold']} piante\n"
+
+        await update.message.reply_text(msg, parse_mode="Markdown")

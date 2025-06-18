@@ -1,12 +1,9 @@
 
-from telegram import Update,  KeyboardButton, ReplyKeyboardMarkup
+from telegram import Update
 from flask import current_app
-from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, MessageHandler, filters
-from datetime import datetime, timedelta
-from typing import Callable
-from src.virtualization.digital_replica.dr_factory import DRFactory
-import src.application.telegram.handlers.library as lib
-from src.application.telegram.handlers.login_handlers import is_authenticated, get_logged_user
+from telegram.ext import ContextTypes
+from datetime import datetime
+from src.application.telegram.handlers.login_handlers import is_authenticated
 from src.application.telegram.handlers.plant_handlers import get_user_plants
 import logging
 import matplotlib
@@ -16,9 +13,10 @@ from io import BytesIO
 from telegram import InputFile
 import statistics
 import matplotlib.dates as mdates
-
-
+from datetime import datetime, timedelta
+import asyncio
 logger = logging.getLogger(__name__)
+OLD_DATA_MIN = 0.5
 
 async def calibrate_dry_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = update.effective_user.id
@@ -105,7 +103,7 @@ async def water_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 📤 Pubblica comando MQTT
     mqtt_handler = current_app.config['MQTT_HANDLER']
     topic = f"smartplant/{plant_id}/commands"
-    payload = "water"
+    payload = "water 10000"
 
     mqtt_handler.publish(topic, payload)
     await update.message.reply_text(f"💧 Comando `water` inviato a *{plant_name_input}*", parse_mode="Markdown")
@@ -115,7 +113,7 @@ async def water_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def send_alert_to_user(telegram_id: int, plant_name: str, data: float, kind: str):
+async def send_alert_to_user(telegram_id: int, plant_name: str, data, kind: str):
     try:
         bot = current_app.config["TELEGRAM_BOT"]
         if kind=="humidity":
@@ -130,9 +128,28 @@ async def send_alert_to_user(telegram_id: int, plant_name: str, data: float, kin
                 f"La tua pianta *{plant_name}* ha raggiunto solo *{data:.1f}%* di illuminazione.\n"
                 f"Controlla se ha bisogno di essere spostata"
             )
+        elif kind == "error":
+            print(data)
+            delta = round(data.get("delta", 0), 1)
+            delta=max(0,delta)
+            timestamp = data.get("timestamp")
+            if isinstance(timestamp, str):
+                try:
+                    timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                    time_str = timestamp.strftime("%H:%M del %d-%m-%Y")
+                except Exception:
+                    time_str = timestamp
+            else:
+                time_str = str(timestamp)
+
+            message = (
+                f"⚠️ *Possibile anomalia rilevata* sulla pianta *{plant_name}*!\n"
+                f"💧 Dopo un'irrigazione, il livello di umidità è aumentato di soli *{delta}%*\n"
+                f"🕒 Orario: {time_str}\n"
+                f"🔍 Ti consigliamo di controllare che la pompa funzioni correttamente."
+            )
         await bot.send_message(chat_id=telegram_id, text=message, parse_mode="Markdown")  # ✅ await obbligatorio
         logger.info(f"✅ Notifica Telegram inviata a {telegram_id} per {plant_name}")
-        print("Il telegram ID è", telegram_id)
     except Exception as e:
         logger.error(f"❌ Errore durante invio notifica Telegram: {e}")
 
@@ -150,78 +167,67 @@ async def analytics_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /analytics <nome_pianta> <giorni_passati>\nEsempio: /analytics basilico 7")
         return
 
-    plant_name_input = context.args[0].lower().strip()
+    plant_name_input = context.args[0].strip()
     try:
         days = int(context.args[1])
-        end_date = datetime.utcnow()
-        start_date = end_date - timedelta(days=days)
     except ValueError:
         await update.message.reply_text("⚠️ Il numero di giorni deve essere un intero.")
         return
 
     db = current_app.config["DB_SERVICE"]
+    dt_factory = current_app.config["DT_FACTORY"]
+
     plant_dict, _ = get_user_plants(db, telegram_id)
-    plant_id = plant_dict.get(plant_name_input)
+    plant_id = plant_dict.get(plant_name_input.lower())
     if not plant_id:
         await update.message.reply_text(f"❌ Pianta '{plant_name_input}' non trovata.")
         return
 
-    plant = db.get_dr("plant", plant_id)
-    measurements = plant.get("data", {}).get("measurements", [])
+    # Recupera DT
+    dt_data = dt_factory.get_dt_by_plant_id(plant_id)
+    dt_instance = dt_factory.get_dt_instance(dt_data["_id"])
 
-    filtered = []
-    for m in measurements:
-        try:
-            ts = m["timestamp"]
-            if start_date <= ts <= end_date:
-                filtered.append((ts, m["type"], m["value"]))
-        except Exception:
-            continue  # Skip malformed timestamps
-
-    if not filtered:
-        await update.message.reply_text("ℹ️ Nessuna misura trovata nel periodo indicato.")
+    if not dt_instance:
+        await update.message.reply_text("⚠️ Digital Twin non disponibile.")
         return
 
-    # Ordina le misure per timestamp
-    filtered.sort(key=lambda x: x[0])
+    if days <= 1:
+        range_name = "giorno"
+    elif days <= 7:
+        range_name = "settimana"
+    else:
+        range_name = "mese"
 
-    light_data = []
-    humidity_data = []
-    for ts, mtype, val in filtered:
-        if mtype == "light":
-            light_data.append((ts, val))
-        elif mtype == "humidity":
-            humidity_data.append((ts, val))
+    result = dt_instance.execute_service(
+        service_name="GardenHistoryService",
+        range=range_name,
+        plant_name=plant_name_input
+    )
 
-    def compute_stats(data):
-        if not data:
-            return "Nessun dato."
-        values = [v for _, v in data]
-        timestamps = [ts for ts, _ in data]
-        min_val = min(values)
-        max_val = max(values)
-        avg_val = round(statistics.mean(values), 1)
-        min_time = timestamps[values.index(min_val)].strftime("%d-%m %H:%M")
-        max_time = timestamps[values.index(max_val)].strftime("%d-%m %H:%M")
-        return f"📊 Min: {min_val} ({min_time})\n📈 Max: {max_val} ({max_time})\n📉 Media: {avg_val}"
+    if not result or "measurements" not in result:
+        await update.message.reply_text("⚠️ Nessun dato utile trovato nel periodo richiesto.")
+        return
 
     def plot_data(data, ylabel, title):
-        fig, ax = plt.subplots(figsize=(10, 4))  # aumenta la larghezza
+        fig, ax = plt.subplots(figsize=(10, 4))
 
         if data:
-            data.sort(key=lambda x: x[0])
-            times, values = zip(*data)
+            data.sort(key=lambda x: x["timestamp"])
+            times = []
+            for m in data:
+                ts = m["timestamp"]
+                if isinstance(ts, str):
+                    ts = datetime.fromisoformat(ts)
+                times.append(ts)
+            values = [m["value"] for m in data]
 
             ax.plot(times, values, marker='o', linestyle='-')
             ax.set_ylabel(ylabel)
             ax.set_title(title)
             ax.grid(True)
 
-            # Formattazione asse X
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m\n%H:%M'))
             ax.tick_params(axis='x', rotation=45)
-
-            # Espansione dei margini automatici
             fig.autofmt_xdate()
             fig.tight_layout()
 
@@ -231,19 +237,26 @@ async def analytics_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         plt.close(fig)
         return buf
 
+    light_data = [m for m in result["measurements"] if m["type"] == "light"]
+    humidity_data = [m for m in result["measurements"] if m["type"] == "humidity"]
+
+    def format_stats(label, stats):
+        return (f"{label}\n"
+            f"📊 Min: {stats['min']:.1f} ({stats['min_time']})\n"
+            f"📈 Max: {stats['max']:.1f} ({stats['max_time']})\n"
+            f"📉 Media: {stats['mean']:.1f}")
+
     if light_data:
         buf = plot_data(light_data, "Luce (lux)", f"Luce - {plant_name_input}")
         await update.message.reply_photo(photo=InputFile(buf, filename="light.png"))
-        await update.message.reply_text(f"Luce: {compute_stats(light_data)}")
+        await update.message.reply_text(format_stats("💡 Luce:", result["light"]))
 
     if humidity_data:
         buf = plot_data(humidity_data, "Umidità (%)", f"Umidità - {plant_name_input}")
         await update.message.reply_photo(photo=InputFile(buf, filename="humidity.png"))
-        await update.message.reply_text(f"Umidità: {compute_stats(humidity_data)}")
+        await update.message.reply_text(format_stats("💧 Umidità:", result["humidity"]))
 
 
-import asyncio
-import json
 
 async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = update.effective_user.id
@@ -256,66 +269,91 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /status <nome_pianta>")
         return
 
-    plant_name_input = context.args[0].lower().strip()
+    plant_name_input = context.args[0].strip()
     db = current_app.config["DB_SERVICE"]
+    dt_factory = current_app.config["DT_FACTORY"]
+    mqtt_handler = current_app.config["MQTT_HANDLER"]
+
     plant_dict, _ = get_user_plants(db, telegram_id)
-    plant_id = plant_dict.get(plant_name_input)
+    plant_id = plant_dict.get(plant_name_input.lower())
 
     if not plant_id:
         await update.message.reply_text(f"❌ Pianta '{plant_name_input}' non trovata.")
         return
 
-    # 1️⃣ Recupera la Digital Replica
-    plant = db.get_dr("plant", plant_id)
-    measurements = plant.get("data", {}).get("measurements", [])
+    # 🔍 Carica DR e controlla timestamp
+    async def get_last_ts():
+        plant_dr = db.get_dr("plant", plant_id)
+        meas = plant_dr.get("data", {}).get("measurements", [])
+        if not meas:
+            return None
+        ts = meas[-1].get("timestamp")
+        return datetime.fromisoformat(ts) if isinstance(ts, str) else ts
 
-    last_measurement = max(measurements, key=lambda m: m["timestamp"], default=None)
+    last_ts = await get_last_ts()
+    outdated = not last_ts or (datetime.utcnow() - last_ts > timedelta(minutes=OLD_DATA_MIN))
 
-    # 2️⃣ Controlla timestamp
-    too_old = True
-    if last_measurement:
-        timestamp = last_measurement["timestamp"]
-        if isinstance(timestamp, str):
-            timestamp = datetime.fromisoformat(timestamp)
-        too_old = datetime.utcnow() - timestamp > timedelta(hours=1)
+    if outdated:
+        await update.message.reply_text("⏳ Ultima misura troppo vecchia. Richiesta nuova misura in corso...")
+        mqtt_handler.publish(f"smartplant/{plant_id}/commands", {"command": "send_now"})
+        await asyncio.sleep(10)
+        last_ts = await get_last_ts()
 
-    if too_old:
-        await update.message.reply_text("⌛ Misura vecchia. Invio richiesta alla pianta...")
-        # 3️⃣ Invia comando via MQTT
-        mqtt_client = current_app.config["MQTT_CLIENT"]
-        command_topic = f"smartplant/{plant_id}/commands"
-        mqtt_client.publish(command_topic, json.dumps({"command": "send_now"}))
+    # ⚠️ Dopo attesa, controlla se ancora vecchio
+    still_old = not last_ts or (datetime.utcnow() - last_ts > timedelta(minutes=5))
 
-        # 4️⃣ Attendi nuova misura (polling max 10s)
-        for _ in range(10):
-            await asyncio.sleep(1)
-            plant = db.get_dr("plant", plant_id)
-            new_measurements = plant.get("data", {}).get("measurements", [])
-            newest = max(new_measurements, key=lambda m: m["timestamp"], default=None)
-            if newest and newest != last_measurement:
-                break
-        else:
-            await update.message.reply_text("⚠️ Nessuna risposta dalla pianta.")
-            return
-
-    # 5️⃣ Mostra stato attuale
-    plant = db.get_dr("plant", plant_id)
-    measurements = plant.get("data", {}).get("measurements", [])
-    latest = max(measurements, key=lambda m: m["timestamp"], default=None)
-
-    if not latest:
-        await update.message.reply_text("❌ Nessuna misura trovata.")
+    # ✅ Ora istanzia DT e lancia servizio
+    dt_data = dt_factory.get_dt_by_plant_id(plant_id)
+    if not dt_data:
+        await update.message.reply_text("⚠️ Digital Twin non trovato.")
         return
 
-    ts = latest["timestamp"]
-    if isinstance(ts, datetime):
-        ts_str = ts.strftime("%Y-%m-%d %H:%M:%S")
-    else:
-        ts_str = ts
-
-    await update.message.reply_text(
-        f"📡 Ultima misura ricevuta:\n"
-        f"- Tipo: {latest['type']}\n"
-        f"- Valore: {latest['value']}\n"
-        f"- Timestamp: {ts_str}"
+    dt_instance = dt_factory.get_dt_instance(dt_data["_id"])
+    result = dt_instance.execute_service(
+        service_name="GardenStatusService",
+        plant_name=plant_name_input
     )
+
+    if not result:
+        await update.message.reply_text("⚠️ Nessuna misura disponibile.")
+        return
+
+    msg = (f"📡 Ultima misura per {plant_name_input}:") + "\n" \
+          + f"💧 Umidità: {result['humidity']}%" + "\n" \
+          + f"💡 Luce: {result['light']}" + "\n" \
+          + f"⏱️ Timestamp: {result['last_updated']}"
+    if still_old:
+        msg = "⚠️ I dati potrebbero non essere aggiornati!\n\n" + msg
+
+    plant_dr = next(
+    (dr for dr in dt_instance.digital_replicas if dr.get("type") == "plant" and dr.get("_id") == plant_id),
+    None)
+
+    if plant_dr:
+        management_info = plant_dr.get("metadata", {}).get("management_info", {})
+        pending = management_info.get("pending_actions", [])
+
+    status_info = []
+    auto=plant_dr["profile"].get("auto_watering")
+    if "light" in pending:
+        status_info.append(
+            "🌥️ La luce rilevata è bassa da diverse ore. "
+            "Considera di spostare la pianta in una zona più luminosa ☀️"
+        )
+
+    if not auto and "humidity" in pending:
+        status_info.append(
+            "⚠️ L’umidità del terreno è sotto la soglia. "
+            "Ti consigliamo di innaffiare la pianta manualmente 💧"
+        )
+
+    if auto and management_info.get("disable_aw"):
+        status_info.append(
+            "🚫 L’auto‑watering è attualmente *sospeso* "
+            "perché è prevista pioggia nelle prossime ore ☔️"
+        )
+
+    if status_info:
+        msg += "\n\n" + "<b>⚠️ Azioni suggerite:</b>\n" + "\n\n".join(status_info)
+
+    await update.message.reply_text(msg, parse_mode="HTML")

@@ -4,7 +4,6 @@ from pydantic import BaseModel, create_model, Field, field_validator
 import yaml
 import uuid
 
-
 class DRFactory:
     def __init__(self, schema_path: str):
         self.schema = self._load_schema(schema_path)
@@ -32,7 +31,6 @@ class DRFactory:
 
         field_definitions = {}
         profile_fields = self.schema["schemas"]["common_fields"].get("profile", {})
-
         for field_name, field_type in profile_fields.items():
             is_required = field_name in mandatory_fields
             constraints = {}
@@ -84,15 +82,18 @@ class DRFactory:
 
         return model
 
-    def _create_data_model(self) -> Type[BaseModel]:
+    def _create_data_model(self) -> type[BaseModel]:
         """Create Pydantic model for data section"""
         type_constraints = (
             self.schema["schemas"].get("validations", {}).get("type_constraints", {})
         )
-        data_fields = self.schema["schemas"].get("entity", {}).get("data", {})
 
+        data_fields = self.schema["schemas"].get("entity", {}).get("data", {})
         field_definitions = {}
+        validators = {}
+
         for field_name, field_type in data_fields.items():
+
             if field_type == "List[Dict]":
                 field_definitions[field_name] = (
                     List[Dict[str, Any]],
@@ -105,35 +106,30 @@ class DRFactory:
                     (
                         str
                         if field_type == "str"
-                        else (
-                            int
-                            if field_type == "int"
-                            else float if field_type == "float" else Any
-                        )
+                        else int
+                        if field_type == "int"
+                        else float
+                        if field_type == "float"
+                        else Any
                     ),
                     Field(None),
                 )
 
-        model = create_model("Data", **field_definitions)
-
-        # Add validators for fields that need them
-        for field_name, field_type in data_fields.items():
-            # Add enum validator if needed
-            if (
-                field_name in type_constraints
-                and "enum" in type_constraints[field_name]
-            ):
+            # ENUM validator
+            if field_name in type_constraints and "enum" in type_constraints[field_name]:
                 enum_values = type_constraints[field_name]["enum"]
 
-                @field_validator(field_name)
-                def validate_enum(value, field):
-                    if value not in enum_values:
-                        raise ValueError(f"{field.name} must be one of {enum_values}")
-                    return value
+                def make_enum_validator(field_name, enum_values):
+                    @field_validator(field_name, mode="before")
+                    def enum_validator(cls, value):
+                        if value not in enum_values:
+                            raise ValueError(f"{field_name} must be one of {enum_values}")
+                        return value
+                    return enum_validator
 
-                setattr(model, f"validate_{field_name}", validate_enum)
+                validators[f"validate_{field_name}"] = make_enum_validator(field_name, enum_values)
 
-            # Add List[Dict] validator if needed
+            # LIST[DICT] validator
             if field_type == "List[Dict]" and field_name in type_constraints:
                 rules = type_constraints[field_name]
                 if "item_constraints" in rules:
@@ -141,43 +137,44 @@ class DRFactory:
                     required_fields = item_rules.get("required_fields", [])
                     type_mappings = item_rules.get("type_mappings", {})
 
-                    @field_validator(field_name)
-                    def validate_list_items(value, field):
-                        if not isinstance(value, list):
-                            raise ValueError(f"{field.name} must be a list")
+                    def make_list_validator(field_name, required_fields, type_mappings):
+                        @field_validator(field_name, mode="before")
+                        def validate_list_items(cls, value):
 
-                        for idx, item in enumerate(value):
-                            if not isinstance(item, dict):
-                                raise ValueError(
-                                    f"Item {idx} in {field.name} must be a dictionary"
-                                )
+                            if not isinstance(value, list):
+                                raise ValueError(f"{field_name} must be a list")
 
-                            missing = [f for f in required_fields if f not in item]
-                            if missing:
-                                raise ValueError(
-                                    f"Missing required fields {missing} in item {idx}"
-                                )
+                            for idx, item in enumerate(value):
+                                if not isinstance(item, dict):
+                                    raise ValueError(f"Item {idx} in {field_name} must be a dictionary")
 
-                            for key, expected_type in type_mappings.items():
-                                if key in item:
-                                    val = item[key]
-                                    if expected_type == "datetime":
-                                        if not isinstance(val, (datetime, str)):
-                                            raise ValueError(
-                                                f"Field {key} in item {idx} must be a datetime"
-                                            )
-                                    elif expected_type == "float":
-                                        try:
-                                            item[key] = float(val)
-                                        except (TypeError, ValueError):
-                                            raise ValueError(
-                                                f"Field {key} in item {idx} must be a number"
-                                            )
-                        return value
+                                missing = [f for f in required_fields if f not in item]
+                                if missing:
+                                    raise ValueError(f"Missing required fields {missing} in item {idx}")
 
-                    setattr(model, f"validate_{field_name}", validate_list_items)
+                                for key, expected_type in type_mappings.items():
+                                    if key in item:
+                                        val = item[key]
+                                        if expected_type == "datetime":
+                                            if not isinstance(val, (datetime, str)):
+                                                raise ValueError(f"Field {key} in item {idx} must be a datetime")
+                                        elif expected_type == "float":
+                                            try:
+                                                item[key] = float(val)
+                                            except Exception:
+                                                raise ValueError(f"Field {key} in item {idx} must be a number")
+                            return value
+                        return validate_list_items
 
+                    validators[f"validate_{field_name}"] = make_list_validator(
+                        field_name, required_fields, type_mappings
+                    )
+
+        # ✅ Create the model with validators
+        model = create_model("Data", **field_definitions, __validators__=validators)
+        model.model_rebuild()
         return model
+
 
     def create_dr(self, dr_type: str, initial_data: Dict[str, Any]) -> Dict:
         """Create a new Digital Replica instance"""
@@ -200,7 +197,6 @@ class DRFactory:
         init_values = (
             self.schema["schemas"].get("validations", {}).get("initialization", {})
         )
-        print("Ciao ", init_values)
         for section, defaults in init_values.items():
             if section == "metadata":
                 dr_dict["metadata"].update(defaults)

@@ -5,10 +5,10 @@ from datetime import datetime, timedelta
 import random
 import time
 
-PLANT_ID = "PL3"
+PLANT_ID = "PL1"
 NUM_GIORNI = 1
-MISURE_AL_GIORNO = 2
-PAUSA = 0.1
+MISURE_AL_GIORNO = 1
+PAUSA = 0.01
 
 client = mqtt.Client()
 client.tls_set()
@@ -29,7 +29,7 @@ def publish_fake_data():
                 },
                 {
                     "type": "light",
-                    "value": round(random.uniform(0.0, 100.0), 1),
+                    "value": round(random.uniform(76, 100.0), 1),
                     "timestamp": timestamp,
 
                 }

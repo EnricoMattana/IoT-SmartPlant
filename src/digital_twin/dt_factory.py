@@ -78,7 +78,7 @@ class DTFactory:
         Returns a mapping of service names to their module paths
         """
         return {
-            "WateringManagement": "src.services.plant_service",
+            "PlantManagement": "src.services.plant_service",
             "GardenStatusService": "src.services.plant_service",
             "GardenHistoryService": "src.services.plant_service"
         }
@@ -237,32 +237,32 @@ class DTFactory:
     #     except Exception as e:
     #         raise Exception(f"Failed to delete Digital Twin: {str(e)}")
 
-    # def remove_digital_replica(self, dt_id: str, dr_id: str) -> None:
-    #     """
-    #     Remove a Digital Replica reference from a Digital Twin
-    #
-    #     Args:
-    #         dt_id: Digital Twin ID
-    #         dr_id: Digital Replica ID
-    #     """
-    #     try:
-    #         dt_collection = self.db_service.db["digital_twins"]
-    #
-    #         dt_collection.update_one(
-    #             {"_id": dt_id},
-    #             {
-    #                 "$pull": {
-    #                     "digital_replicas": {
-    #                         "id": dr_id
-    #                     }
-    #                 },
-    #                 "$set": {
-    #                     "metadata.updated_at": datetime.utcnow()
-    #                 }
-    #             }
-    #         )
-    #     except Exception as e:
-    #         raise Exception(f"Failed to remove Digital Replica: {str(e)}")
+    def remove_digital_replica(self, dt_id: str, dr_id: str) -> None:
+        """
+        Remove a Digital Replica reference from a Digital Twin
+
+        Args:
+            dt_id: Digital Twin ID
+            dr_id: Digital Replica ID
+        """
+        try:
+            dt_collection = self.db_service.db["digital_twins"]
+
+            dt_collection.update_one(
+                {"_id": dt_id},
+                {
+                    "$pull": {
+                        "digital_replicas": {
+                            "id": dr_id
+                        }
+                    },
+                    "$set": {
+                        "metadata.updated_at": datetime.utcnow()
+                    }
+                }
+            )
+        except Exception as e:
+            raise Exception(f"Failed to remove Digital Replica: {str(e)}")
 
     def remove_service(self, dt_id: str, service_name: str) -> None:
         """

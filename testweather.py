@@ -1,66 +1,40 @@
-import requests
-from datetime import datetime, timedelta
-from typing import Dict, Any
-from src.services.base import BaseService  # o da dove la importi tu
+from datetime import datetime, date
+from timezonefinder import TimezoneFinder
+import pytz
+
+def convert_local_hour_to_utc_str(time_str: str, lat: float, lon: float) -> str:
+    """
+    Converte un orario locale tipo "06:12 AM" nella sua ora UTC corrispondente come stringa "HH:MM"
+    usando il fuso orario geografico calcolato da latitudine e longitudine.
+    """
+
+    # 1. Trova il nome del fuso orario (es. 'Europe/Rome') usando lat/lon
+    tf = TimezoneFinder()
+    timezone_str = tf.timezone_at(lat=lat, lng=lon)
+    if not timezone_str:
+        raise ValueError("Fuso orario non trovato per le coordinate fornite")
+
+    # 2. Parso l’orario ricevuto ("06:12 AM") in oggetto datetime.time
+    local_time = datetime.strptime(time_str, "%I:%M %p").time()
+
+    # 3. Combino la data di oggi (UTC) con quell’orario (es. 2025-06-17 + 06:12 AM)
+    today = date.today()
+    local_dt = datetime.combine(today, local_time)
+
+    # 4. Assegno il fuso orario corretto alla data/ora (timezone-aware datetime)
+    tz = pytz.timezone(timezone_str)
+    localized_dt = tz.localize(local_dt)
+
+    # 5. Converto il datetime localizzato in UTC
+    utc_dt = localized_dt.astimezone(pytz.utc)
+
+    # 6. Estraggo solo l’orario in formato stringa "HH:MM"
+    return utc_dt.time()
 
 
+sunrise_utc = convert_local_hour_to_utc_str("06:12 AM", 45.4642, 9.1900)  # Milano
+sunset_utc  = convert_local_hour_to_utc_str("08:45 PM", 45.4642, 9.1900)
 
-class WeatherForecastService(BaseService):
-    def __init__(self, api_key: str, location: str = "Milan", rain_threshold: int = 50):
-        super().__init__()
-        self.api_key = api_key
-        self.location = location
-        self.rain_threshold = rain_threshold
-
-    def execute(self, data: Dict, dr_type: str = None, attribute: str = None) -> Dict[str, Any]:
-        # Build the WeatherAPI request URL with location and 2-day forecast
-        url = (
-            f"http://api.weatherapi.com/v1/forecast.json?key={self.api_key}"
-            f"&q={self.location}&days=2&aqi=no&alerts=no"
-        )
-        
-        # Make the HTTP request and parse the JSON
-        response = requests.get(url)
-        forecast = response.json()
-
-        # Get the current time and calculate the next 3 full hours
-        now = datetime.now()
-        target_hours = [(now + timedelta(hours=i)).strftime("%Y-%m-%d %H:00") for i in range(1, 4)]
-
-        # Combine hourly forecasts from today and tomorrow
-        all_hours = []
-        for day in forecast["forecast"]["forecastday"]:
-            all_hours.extend(day["hour"])
-
-        # Select only the hours that match the 3 future time targets
-        selected = [
-            hour for hour in all_hours
-            if hour["time"] in target_hours
-        ]
-
-        # If no forecast found for those hours, return error
-        if not selected:
-            return {"status": "error", "reason": "no matching hours"}
-
-        # Compute the average chance of rain over the 3 hours
-        total = sum(int(hour.get("chance_of_rain", 0)) for hour in selected)
-        average = total / len(selected)
-
-        # Decide whether to water or skip based on the threshold
-        decision = "water" if average < self.rain_threshold else "skip"
-
-        # Return decision and data for logging or further use
-        return {
-            "status": "ok",
-            "decision": decision,
-            "chance_of_rain_avg": average,
-            "hours": [h["time"] for h in selected],
-            "location": self.location
-    }
-
-
-
-if __name__ == "__main__":
-    service = WeatherForecastService(api_key="05418e63cb684a3a8f2135050250205", location="Milano")
-    result = service.execute({})
-    print(result)
+print(type(sunrise_utc))
+print("Sunrise UTC:", sunrise_utc)  # → "04:12"
+print("Sunset UTC:", sunset_utc)    # → "18:45"

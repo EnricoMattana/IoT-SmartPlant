@@ -15,8 +15,7 @@ schemas:
       created_at: datetime
       updated_at: datetime
       status: str
-      last_warning_ts: str
-      auto_watering_status: Dict
+      management_info: Dict
 
   entity:
     data:
@@ -74,10 +73,15 @@ schemas:
         preset: "2"
       metadata:
         status: "active"
-        last_warning_ts: null
-        auto_watering_status:
+        management_info:
           last_forecast: null
           skip_pred: False
           disable_aw: False
+          sunrise_h: null
+          sunset_h: null
+          Sunny: True
+          last_warning_ts_h: null
+          last_warning_ts_l: null
+          pending_actions: []
       data:
         measurements: []

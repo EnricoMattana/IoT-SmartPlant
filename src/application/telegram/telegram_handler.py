@@ -16,6 +16,7 @@ from src.application.telegram.handlers.plant_handlers import (
     parse_city_and_io,create_plant2_finish, cancel_create_plant2,
     universal_fallback, delete_plant_handler, create_garden_handler, 
     list_gardens_handler, create_garden_handler, delete_garden_init, delete_garden_confirm, move_plant_handler, garden_info_handler,
+    garden_status_handler, garden_analytics_handler
 )
 from src.application.telegram.handlers.command_handlers import calibrate_dry_handler, calibrate_wet_handler, water_handler, analytics_handler, status_handler
 ASK_PLANT_NAME, ASK_FIELD, ASK_NEW_VALUE = range(3)

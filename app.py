@@ -12,7 +12,6 @@ from src.application.mqtt_handler import SmartPlantMQTTHandler
 from src.virtualization.digital_replica.dr_factory import DRFactory
 import logging
 logging.basicConfig(level=logging.INFO)
-
 #Nuova parte
 from src.application.telegram.telegram_handler import TelegramWebhookHandler
 
@@ -94,7 +93,9 @@ MQTT_CONFIG = {
     "port": 8883,
     "username": "smartplant-backend",
     "password": "IoTPlant2025",
-    "topic": "smartplant/+/measurement"
+    "topic":[
+    ("smartplant/+/measurement", 0),
+    ("smartplant/+/errors", 0),]
 } 
 
 WeatherAPI="05418e63cb684a3a8f2135050250205"
