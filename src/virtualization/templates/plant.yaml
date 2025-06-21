@@ -41,7 +41,6 @@ schemas:
         type: str
       type:
         type: str
-    #profile
       preset:
         type: str
         enum: ["1", "2", "3"]

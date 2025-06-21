@@ -1,16 +1,15 @@
 import requests
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional, Union
 from .base import BaseService 
-from copy import copy
 import logging
 from datetime import datetime, timedelta, date
-from typing import Dict, List, Optional, Union
 import statistics
 from timezonefinder import TimezoneFinder
 import pytz
 
 logger = logging.getLogger(__name__)
 
+# Costanti di configurazione per la gestione delle piante
 FORECAST_COOLDOWN_HR = 3
 DELTA_SKIP = 2.5
 HUMIDITY_THRESHOLD = 20.0
@@ -18,6 +17,12 @@ PROB_RAIN_THRESHOLD = 50.0
 NOTIFICATION_COOLDOWN_MIN = 15
 LAST_H_LIGHT = 0.1
 class PlantManagement(BaseService):
+    """
+    Servizio per la gestione intelligente delle piante:
+    decide quando inviare notifiche o attivare l'irrigazione
+    in base a soglie dipendenti dalla tipologie della pianta, 
+    previsioni meteo e stato della pianta.
+    """
     def __init__(self):
         super().__init__()
         self.name = "PlantManagement"
@@ -29,6 +34,9 @@ class PlantManagement(BaseService):
         self.notification_cooldown_min = NOTIFICATION_COOLDOWN_MIN
 
     def configure(self, config: Dict[str, Any]):
+        """
+        Configura le soglie e i parametri del servizio in base al preset della pianta.
+        """
         preset_defaults = {}
         preset = config.get("preset")
         if preset == "fragile":
@@ -61,7 +69,7 @@ class PlantManagement(BaseService):
             }
         
 
-        # Applica i valori effettivi: preset + override solo se presente nel config
+        # Applica i valori di default del preset
         self.rain_threshold = preset_defaults.get("rain_threshold")
         self.humidity_threshold = preset_defaults.get("humidity_threshold")
         self.forecast_cooldown_hr = preset_defaults.get("forecast_cooldown_hr")
@@ -70,6 +78,10 @@ class PlantManagement(BaseService):
         self.light_threshold = preset_defaults.get("light_threshold")
 
     def execute(self, data: Dict, **kwargs) -> Dict[str, Any]:
+        """
+        Esegue la logica di gestione della pianta:
+        valuta misure, stato, meteo e decide se notificare o irrigare.
+        """
         plant_id = kwargs.get("plant_id")
         context = kwargs.get("context")
         db = context["DB_SERVICE"]
@@ -77,7 +89,8 @@ class PlantManagement(BaseService):
         duration=None
         if not plant_id:
             raise ValueError("plant_id mancante")
-
+        
+        # Cerca la Digital Replica della pianta
         plant = None
         for dr in data["digital_replicas"]:
             if dr.get("_id") == plant_id and dr.get("type") == "plant":
@@ -85,8 +98,9 @@ class PlantManagement(BaseService):
                 break
 
         if plant is None:
-            raise ValueError(f"⚠️ Nessuna DR di tipo 'plant' trovata con id {plant_id} nel DT")
+            raise ValueError(f"Nessuna DR di tipo 'plant' trovaa con id {plant_id} nel DT, c'è un errore")
 
+        # Configura il servizio in base al preset della pianta
         preset = plant["profile"].get("preset")
         self.configure({"preset": preset})
         metadata = plant.get("metadata", {})
@@ -96,21 +110,24 @@ class PlantManagement(BaseService):
         now = datetime.utcnow()
         req_action = "0"
 
-        logger.info(f"[{plant_id}] 🔍 Esecuzione PlantManagement – tipo: {measurement['type']} – valore: {measurement['value']}")
+        logger.info(f"[{plant_id}] Esecuzione PlantManagement – tipo: {measurement['type']} – valore: {measurement['value']}")
 
+        # Gestione previsioni meteo e cooldown
         last_forecast = status.get("last_forecast")
         if not isinstance(last_forecast, datetime):
+            # Gestione dell'inizializzazione
             last_forecast = now - timedelta(hours=100)
 
         if now - last_forecast >= timedelta(hours=self.forecast_cooldown_hr):
-            logger.info(f"[{plant_id}] 🌤️ Forecast scaduto, aggiorno le previsioni meteo...")
+            logger.info(f"[{plant_id}] Forecast scaduto, aggiornamento delle previsioni meteo")
             status["last_forecast"] = now
             location = plant["profile"].get("location")
-            prediction = self.get_forecast(now, location)
+            prediction = self.get_forecast(location)
 
             status["sunrise_h"] = prediction["sunrise_h"].strftime("%H:%M") 
             status["sunset_h"]  = prediction["sunset_h"].strftime("%H:%M")
             status["Sunny"] = prediction["sunny"]
+            # Se la pianta è outdoor e ha autowatering, valuta la pioggia
             if plant["profile"].get("outdoor") and plant["profile"].get("auto_watering"):
                 logger.info(f"[{plant_id}] 📈 Probabilità pioggia nelle prossime ore: {prediction.get('chance_of_rain', '?')}%")
                 if prediction.get("chance_of_rain", 0) > self.rain_threshold and not status.get("skip_pred", False):
@@ -121,7 +138,7 @@ class PlantManagement(BaseService):
                     status["disable_aw"] = False
 
                 status["skip_pred"] = False
-
+        # --- Gestione misure di luce ---
         if measurement["type"] == "light":
             timestamp = measurement["timestamp"]
             if isinstance(timestamp, str):
@@ -142,13 +159,11 @@ class PlantManagement(BaseService):
                     ts = datetime.fromisoformat(ts)
                 if ts >= timestamp - timedelta(hours=LAST_H_LIGHT):
                     last_m.append(m)
-
-            print(status)
             sunrise_h = status.get("sunrise_h")   # stringa "HH:MM"
             sunset_h = status.get("sunset_h")     # stringa "HH:MM"
             sunny = status.get("Sunny", True)
 
-            # 🕐 Cooldown (tempo ultimo avviso luce)
+            # Gestione cooldown per notifiche di luce
             last_warn_ts = status.get("last_warning_ts_l")
             if isinstance(last_warn_ts, str):
                 last_warn_ts = datetime.fromisoformat(last_warn_ts) 
@@ -160,7 +175,7 @@ class PlantManagement(BaseService):
                 status["pending_actions"].remove(measurement["type"])
             if last_m:
                 avg = sum(m["value"] for m in last_m) / len(last_m)
-                logger.info(f"[{plant_id}] 💡 Media luce (ultime 3h): {avg:.1f} (soglia {self.light_threshold}%)")
+                logger.info(f"[{plant_id}] 💡 Media luce: {avg:.1f} (soglia {self.light_threshold}%)")
 
                 if (
                     avg < self.light_threshold
@@ -176,11 +191,11 @@ class PlantManagement(BaseService):
                     else:
                         logger.info(f"[{plant_id}] ⏳ Notifica luce in cooldown")
 
-            # 📩 Azione finale
+            # Azione finale: invia notifica se necessario
             if should_send:
                 req_action = "notify_light"
 
-            # 💾 Salva sempre lo stato aggiornato
+            # Salva sempre lo stato aggiornato
             plant_updated = dr_factory.update_dr(plant, {
                 "metadata": {
                     "management_info": status
@@ -189,7 +204,7 @@ class PlantManagement(BaseService):
             db.update_dr("plant", plant_id, plant_updated)
             return {"action": req_action}
 
-        # Umidità bassa → valuta irrigazione
+        # --- Gestione umidità: valuta irrigazione o notifica ---
         humidity = measurement["value"]
         ts = measurement["timestamp"]
         if isinstance(ts, str):
@@ -215,32 +230,36 @@ class PlantManagement(BaseService):
 
         # === DECISIONE ===
         if not plant["profile"].get("auto_watering", False):
+            # Se l'autowatering è disattivato, invia notifica se non in cooldown
             if measurement["type"] not in status["pending_actions"]:
                 status["pending_actions"].append(measurement["type"])
             if now - last_warning_ts_h >= timedelta(minutes=self.notification_cooldown_min):
                 last_warning_ts_h = now
-                logger.info(f"[{plant_id}] 🛑 AutoWatering disattivato → invia notifica")
+                logger.info(f"[{plant_id}] AutoWatering disattivato -> invia notifica")
                 req_action = "notify_humidity"
             else:
-                logger.info(f"[{plant_id}] 🛑 AutoWatering disattivato → notifica in CD")
+                logger.info(f"[{plant_id}] AutoWatering disattivato -> notifica in CD")
         elif not plant["profile"].get("outdoor", False):
-            logger.info(f"[{plant_id}] 🪴 Pianta indoor → procedo con annaffiatura")
+            # Se la pianta è indoor, procedi con irrigazione
+            logger.info(f"[{plant_id}] Pianta indoor -> procedo con annaffiatura")
             req_action = "water"
         elif not status.get("disable_aw", False):
-            logger.info(f"[{plant_id}] ✅ AutoWatering abilitato → procedo con annaffiatura")
+            # Se non deve piovere, procedi con irrigazione
+            logger.info(f"[{plant_id}] AutoWatering abilitato -> procedo con annaffiatura")
             req_action = "water"
         else:
+            # Se watering bloccato da forecast recente, valuta timeout
             last_forecast = status.get("last_forecast")
             if not isinstance(last_forecast, datetime):
                 last_forecast = now - timedelta(hours=100)
 
             if ts - last_forecast >= timedelta(hours=self.delta_skip_hr):
-                logger.info(f"[{plant_id}] ⏱️ Timeout superato → forzo annaffiatura e skip_pred = True")
+                logger.info(f"[{plant_id}] Timeout superato -> forzo annaffiatura e skip_pred = True")
                 status["skip_pred"] = True
                 status["disable_aw"] = False
                 req_action = "water"
             else:
-                logger.info(f"[{plant_id}] 🚫 Forecast recente → annaffiatura bloccata")
+                logger.info(f"[{plant_id}] Forecast recente -> annaffiatura bloccata")
 
         # Salva eventuali modifiche
         status["last_warning_ts_h"] = last_warning_ts_h
@@ -252,7 +271,7 @@ class PlantManagement(BaseService):
         }) 
         db.update_dr("plant", plant_id, plant_updated)
 
-
+        # Calcola la durata (in millisecondi) dell'irrigazione se necessario
         if req_action=="water":
             MAX_DURATION = 20
             MIN_DURATION = 10
@@ -271,30 +290,33 @@ class PlantManagement(BaseService):
         return {"action": req_action, "duration": duration}
 
 
-    def get_forecast(self, now: datetime, location) -> Dict[str, Any]:
+    def get_forecast(self, location) -> Dict[str, Any]:
+        """
+        Recupera le previsioni meteo per la località della pianta.
+        Restituisce probabilità di pioggia, orari di alba/tramonto e 
+        se la giornata è soleggiata.
+        """
         url = (
             f"http://api.weatherapi.com/v1/forecast.json?key={self.api_key}"
             f"&q={location}&days=2&aqi=no&alerts=no"
         )
         response = requests.get(url)
         forecast = response.json()
+        # Questa volta now viene sovrascritto dal local time per valutare la probabilità di pioggia, non UTC
         now = datetime.strptime(forecast["location"]["localtime"], "%Y-%m-%d %H:%M")
-        target_hours = [(now + timedelta(hours=i)).strftime("%Y-%m-%d %H:00") for i in range(1, 4)]
+        # Gestione della probabilità di pioggia
+        target_hours = [(now + timedelta(hours=i)).strftime("%Y-%m-%d %H:00") for i in range(0, 4)]
         all_hours = []
         for day in forecast.get("forecast", {}).get("forecastday", []):
             all_hours.extend(day.get("hour", []))
 
         selected = [hour for hour in all_hours if hour.get("time") in target_hours]
-        if not selected:
-            logger.warning("⚠️ Nessuna previsione trovata nelle prossime ore")
-            return {"status": "error", "reason": "no matching hours"}
-
         max_prob = max(int(hour.get("chance_of_rain", 0)) for hour in selected)
 
-        # --- AGGIUNTE CONCORDATE ---
+        # Gestione degli orari di tramonto / alba e soleggiato.
         astro = forecast.get("forecast", {}).get("forecastday", [{}])[0].get("astro", {})
-        sunrise_h = astro.get("sunrise")  # esempio: "05:35 AM"
-        sunset_h = astro.get("sunset")    # esempio: "09:04 PM"
+        sunrise_h = astro.get("sunrise")  
+        sunset_h = astro.get("sunset")    
 
         now_hour = now.strftime("%Y-%m-%d %H:00")
         current = next((h for h in all_hours if h.get("time") == now_hour), None)
@@ -304,7 +326,7 @@ class PlantManagement(BaseService):
         lon = forecast["location"]["lon"]
         sunrise_utc = self.convert_local_hour_to_utc_str(sunrise_h, lat, lon)
         sunset_utc = self.convert_local_hour_to_utc_str(sunset_h, lat, lon)
-        # --- FINE AGGIUNTE ---
+        
 
         return {
             "status": "ok",
@@ -320,28 +342,27 @@ class PlantManagement(BaseService):
         Converte un orario locale tipo "06:12 AM" nella sua ora UTC corrispondente come stringa "HH:MM"
         usando il fuso orario geografico calcolato da latitudine e longitudine.
         """
-
-        # 1. Trova il nome del fuso orario (es. 'Europe/Rome') usando lat/lon
+        # Trova il nome del fuso orario dalle coordinate geografiche
         tf = TimezoneFinder()
         timezone_str = tf.timezone_at(lat=lat, lng=lon)
         if not timezone_str:
             raise ValueError("Fuso orario non trovato per le coordinate fornite")
 
-        # 2. Parso l’orario ricevuto ("06:12 AM") in oggetto datetime.time
+        # Parse dell’orario ricevuto in oggetto datetime.time
         local_time = datetime.strptime(time_str, "%I:%M %p").time()
 
-        # 3. Combino la data di oggi (UTC) con quell’orario (es. 2025-06-17 + 06:12 AM)
+        # Combinazione della data di oggi (UTC) con quell’orario (i.e. 2025-05-17 + 06:12 AM)
         today = date.today()
         local_dt = datetime.combine(today, local_time)
 
-        # 4. Assegno il fuso orario corretto alla data/ora (timezone-aware datetime)
+        # Calcolo del fuso orario corretto alla data/ora 
         tz = pytz.timezone(timezone_str)
         localized_dt = tz.localize(local_dt)
 
-        # 5. Converto il datetime localizzato in UTC
+        # Conversione del datetime localizzato in UTC
         utc_dt = localized_dt.astimezone(pytz.utc)
 
-        # 6. Estraggo solo l’orario in formato stringa "HH:MM"
+        # Return del solo orario
         return utc_dt.time()
 
 
@@ -448,8 +469,9 @@ class GardenHistoryService(BaseService):
 
 class GardenStatusService(BaseService):
     """
-    Ritorna lo stato attuale (ultima umidità e luce) di tutte le piante nel DT
-    o solo di una specifica pianta se specificata.
+    Analizza lo storico di umidità e luce per ciascuna pianta nel giardino
+    e restituisce: max/min con timestamp, media, deviazione standard ecc.
+    Può restituire tutto il giardino o solo una pianta specifica.
     """
     def __init__(self):
         super().__init__()

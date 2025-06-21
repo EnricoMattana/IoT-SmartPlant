@@ -16,7 +16,7 @@ import matplotlib.dates as mdates
 from datetime import datetime, timedelta
 import asyncio
 logger = logging.getLogger(__name__)
-OLD_DATA_MIN = 0.5
+OLD_DATA_MIN = 30
 
 async def calibrate_dry_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = update.effective_user.id
@@ -176,12 +176,32 @@ async def analytics_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     db = current_app.config["DB_SERVICE"]
     dt_factory = current_app.config["DT_FACTORY"]
+    mqtt_handler = current_app.config["MQTT_HANDLER"]
 
     plant_dict, _ = get_user_plants(db, telegram_id)
     plant_id = plant_dict.get(plant_name_input.lower())
     if not plant_id:
         await update.message.reply_text(f"❌ Pianta '{plant_name_input}' non trovata.")
         return
+
+    # Controlla freschezza e richiede nuove misure fino a 3 volte
+    async def get_last_ts():
+        plant_dr = db.get_dr("plant", plant_id)
+        meas = plant_dr.get("data", {}).get("measurements", [])
+        if not meas:
+            return None
+        ts = meas[-1].get("timestamp")
+        return datetime.fromisoformat(ts) if isinstance(ts, str) else ts
+
+    MAX_TRY = 3
+    for i in range(MAX_TRY):
+        last_ts = await get_last_ts()
+        outdated = not last_ts or (datetime.utcnow() - last_ts > timedelta(minutes=0.5))
+        if not outdated:
+            break
+        await update.message.reply_text(f"⏳ Ultima misura troppo vecchia. Richiesta nuova misura... Tentativo {i+1}")
+        mqtt_handler.publish(f"smartplant/{plant_id}/commands", {"command": "send_now"})
+        await asyncio.sleep(10)
 
     # Recupera DT
     dt_data = dt_factory.get_dt_by_plant_id(plant_id)
@@ -242,9 +262,9 @@ async def analytics_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     def format_stats(label, stats):
         return (f"{label}\n"
-            f"📊 Min: {stats['min']:.1f} ({stats['min_time']})\n"
-            f"📈 Max: {stats['max']:.1f} ({stats['max_time']})\n"
-            f"📉 Media: {stats['mean']:.1f}")
+                f"📊 Min: {stats['min']:.1f} ({stats['min_time']})\n"
+                f"📈 Max: {stats['max']:.1f} ({stats['max_time']})\n"
+                f"📉 Media: {stats['mean']:.1f}")
 
     if light_data:
         buf = plot_data(light_data, "Luce (lux)", f"Luce - {plant_name_input}")
@@ -255,6 +275,7 @@ async def analytics_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         buf = plot_data(humidity_data, "Umidità (%)", f"Umidità - {plant_name_input}")
         await update.message.reply_photo(photo=InputFile(buf, filename="humidity.png"))
         await update.message.reply_text(format_stats("💧 Umidità:", result["humidity"]))
+
 
 
 
@@ -281,7 +302,6 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Pianta '{plant_name_input}' non trovata.")
         return
 
-    # 🔍 Carica DR e controlla timestamp
     async def get_last_ts():
         plant_dr = db.get_dr("plant", plant_id)
         meas = plant_dr.get("data", {}).get("measurements", [])
@@ -290,17 +310,20 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ts = meas[-1].get("timestamp")
         return datetime.fromisoformat(ts) if isinstance(ts, str) else ts
 
-    last_ts = await get_last_ts()
-    outdated = not last_ts or (datetime.utcnow() - last_ts > timedelta(minutes=OLD_DATA_MIN))
-
-    if outdated:
-        await update.message.reply_text("⏳ Ultima misura troppo vecchia. Richiesta nuova misura in corso...")
-        mqtt_handler.publish(f"smartplant/{plant_id}/commands", {"command": "send_now"})
-        await asyncio.sleep(10)
+    MAX_TRY=3
+    for i in range(0, MAX_TRY):
         last_ts = await get_last_ts()
+        outdated = not last_ts or (datetime.utcnow() - last_ts > timedelta(minutes=0.5))
+        if outdated:
+            await update.message.reply_text(f"⏳ Ultima misura troppo vecchia. Richiesta nuova misura in corso... Tentativo {i+1}")
+            mqtt_handler.publish(f"smartplant/{plant_id}/commands", {"command": "send_now"})
+            await asyncio.sleep(10)
+            last_ts = await get_last_ts()
 
-    # ⚠️ Dopo attesa, controlla se ancora vecchio
-    still_old = not last_ts or (datetime.utcnow() - last_ts > timedelta(minutes=5))
+        # ⚠️ Dopo attesa, controlla se ancora vecchio
+        still_old = not last_ts or (datetime.utcnow() - last_ts > timedelta(minutes=0.5))
+        if not still_old:
+            break
 
     # ✅ Ora istanzia DT e lancia servizio
     dt_data = dt_factory.get_dt_by_plant_id(plant_id)
