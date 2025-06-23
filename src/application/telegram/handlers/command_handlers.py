@@ -1,4 +1,3 @@
-
 from telegram import Update
 from flask import current_app
 from telegram.ext import ContextTypes
@@ -11,7 +10,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from io import BytesIO
 from telegram import InputFile
-import statistics
 import matplotlib.dates as mdates
 from datetime import datetime, timedelta
 import asyncio
@@ -19,6 +17,7 @@ logger = logging.getLogger(__name__)
 OLD_DATA_MIN = 30
 
 async def calibrate_dry_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    '''Handler Calibrazione dry'''
     telegram_id = update.effective_user.id
     if not is_authenticated(telegram_id):
         await update.message.reply_text("❌ Devi prima fare il login.")
@@ -54,7 +53,7 @@ async def calibrate_wet_handler(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     if not context.args:
-        await update.message.reply_text("📛 Devi scrivere il nome della pianta dopo il comando.\nEsempio: `/calibrate_wet basilico`", parse_mode="Markdown")
+        await update.message.reply_text("Devi scrivere il nome della pianta dopo il comando.\nEsempio: `/calibrate_wet basilico`", parse_mode="Markdown")
         return
 
     plant_name_input = " ".join(context.args).lower().strip()
@@ -71,6 +70,7 @@ async def calibrate_wet_handler(update: Update, context: ContextTypes.DEFAULT_TY
     topic = f"smartplant/{plant_id}/commands"
     payload = "calWet"
 
+
     mqtt_handler.publish(topic, payload)
     await update.message.reply_text(f"✅ Comando `cal_wet` inviato a *{plant_name_input}*", parse_mode="Markdown")
 
@@ -86,7 +86,7 @@ async def water_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 📥 Controllo che l'utente abbia inserito il nome
     if not context.args:
-        await update.message.reply_text("📛 Devi scrivere il nome della pianta dopo il comando.\nEsempio: `/water basilico`", parse_mode="Markdown")
+        await update.message.reply_text("Devi scrivere il nome della pianta dopo il comando.\nEsempio: `/water basilico`", parse_mode="Markdown")
         return
 
     plant_name_input = " ".join(context.args).lower().strip()
@@ -148,10 +148,10 @@ async def send_alert_to_user(telegram_id: int, plant_name: str, data, kind: str)
                 f"🕒 Orario: {time_str}\n"
                 f"🔍 Ti consigliamo di controllare che la pompa funzioni correttamente."
             )
-        await bot.send_message(chat_id=telegram_id, text=message, parse_mode="Markdown")  # ✅ await obbligatorio
+        await bot.send_message(chat_id=telegram_id, text=message, parse_mode="Markdown") 
         logger.info(f"✅ Notifica Telegram inviata a {telegram_id} per {plant_name}")
     except Exception as e:
-        logger.error(f"❌ Errore durante invio notifica Telegram: {e}")
+        logger.error(f"Errore durante invio notifica Telegram: {e}")
 
 
 
@@ -164,7 +164,7 @@ async def analytics_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if len(context.args) != 2:
-        await update.message.reply_text("Usage: /analytics <nome_pianta> <giorni_passati>\nEsempio: /analytics basilico 7")
+        await update.message.reply_text("Usage: /analytics <nome_pianta> <giorni>\nEsempio: /analytics basilico 7")
         return
 
     plant_name_input = context.args[0].strip()
@@ -201,7 +201,7 @@ async def analytics_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             break
         await update.message.reply_text(f"⏳ Ultima misura troppo vecchia. Richiesta nuova misura... Tentativo {i+1}")
         mqtt_handler.publish(f"smartplant/{plant_id}/commands", {"command": "send_now"})
-        await asyncio.sleep(10)
+        await asyncio.sleep(5)
 
     # Recupera DT
     dt_data = dt_factory.get_dt_by_plant_id(plant_id)
@@ -229,32 +229,50 @@ async def analytics_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     def plot_data(data, ylabel, title):
+        # Creo una nuova figura matplotlib con un asse (ax), dimensione 10x4
         fig, ax = plt.subplots(figsize=(10, 4))
 
+        # Se ci sono dati da plottare (lista non vuota)
         if data:
+            # Ordino i dati cronologicamente in base al timestamp
             data.sort(key=lambda x: x["timestamp"])
+
+            # Estraggo e converto i timestamp (se sono stringhe ISO)
             times = []
             for m in data:
                 ts = m["timestamp"]
                 if isinstance(ts, str):
                     ts = datetime.fromisoformat(ts)
                 times.append(ts)
+
+            # Estraggo i valori numerici dalla lista
             values = [m["value"] for m in data]
 
+            # Plotto i dati come linea con marker su ogni punto
             ax.plot(times, values, marker='o', linestyle='-')
+
+            # Imposto etichetta sull’asse Y e titolo del grafico
             ax.set_ylabel(ylabel)
             ax.set_title(title)
+
+            # Attivo la griglia sul grafico per facilitarne la lettura
             ax.grid(True)
 
+            # Formatto l’asse X per mostrare data e ora
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m\n%H:%M'))
-            ax.tick_params(axis='x', rotation=45)
-            fig.autofmt_xdate()
-            fig.tight_layout()
+            ax.tick_params(axis='x', rotation=45)  # inclino le etichette per leggibilità
+            fig.autofmt_xdate()  # migliora automaticamente il layout delle date
+            fig.tight_layout()   # ottimizza la disposizione generale degli elementi
 
+        # Salvo il grafico in un buffer in memoria (formato PNG)
         buf = BytesIO()
         fig.savefig(buf, format='png')
-        buf.seek(0)
+        buf.seek(0)  # riporto il cursore all’inizio del buffer
+
+        # Chiudo la figura per liberare memoria
         plt.close(fig)
+
+        # Ritorno il buffer che può essere inviato su Telegram o salvato
         return buf
 
     light_data = [m for m in result["measurements"] if m["type"] == "light"]
@@ -320,12 +338,12 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await asyncio.sleep(10)
             last_ts = await get_last_ts()
 
-        # ⚠️ Dopo attesa, controlla se ancora vecchio
+        # Dopo attesa, controlla se ancora vecchio
         still_old = not last_ts or (datetime.utcnow() - last_ts > timedelta(minutes=0.5))
         if not still_old:
             break
 
-    # ✅ Ora istanzia DT e lancia servizio
+    # Ora istanzia DT e lancia servizio
     dt_data = dt_factory.get_dt_by_plant_id(plant_id)
     if not dt_data:
         await update.message.reply_text("⚠️ Digital Twin non trovato.")
