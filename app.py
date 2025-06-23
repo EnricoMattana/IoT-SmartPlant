@@ -91,7 +91,7 @@ MQTT_CONFIG = {
     "password": "IoTPlant2025",
     "topic":[
     ("smartplant/+/measurement", 0),
-    ("smartplant/+/errors", 0),]
+    ("smartplant/+/errors", 1),]
 } 
 WeatherAPI="05418e63cb684a3a8f2135050250205"
 

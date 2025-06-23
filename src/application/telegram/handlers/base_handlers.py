@@ -5,9 +5,17 @@ from src.application.telegram.handlers.login_handlers import is_authenticated
 # --- /start command handler ---
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler for the /start command"""
-    await update.message.reply_text(
-        "Hello! I am the Smart Plant Bot, peak of electronic engineering evolution <3."
+    message = (
+        "🌱 *Ciao! Sono lo Smart Plant Bot!*\n\n"
+        "Con me potrai prenderti cura delle tue piante 🌼\n"
+        "- Controlla l'umidità\n"
+        "- Innaffiale a distanza 💧\n"
+        "- Attiva l’irrigazione automatica\n"
+        "- Ricevi allarmi in tempo reale\n\n"
+        "Premi /help per una panoramica dei comandi disponibili 🛠️"
     )
+    await update.message.reply_text(message, parse_mode="Markdown")
+
 
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler for the /help command"""
@@ -39,8 +47,6 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "<b>📊 Dati e Stato</b>\n"
             "/status – Stato di una pianta\n"
             "/analytics – Statistiche pianta: <code>/analytics nome giorni</code>\n"
-            "/garden_status – Stato generale del giardino\n"
-            "/garden_analytics – Statistiche giardino: <code>/garden_analytics giorni</code>\n\n"
         )
     else:
         help_text = (

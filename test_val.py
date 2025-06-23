@@ -11,7 +11,7 @@ initial_data = {
         "owner_id": "user",
         "outdoor": "1",              # ❌ bool
         "location": "cagliari",         # ❌ enum
-        "auto_watering": 30,      # ❌ bool
+        "auto_watering": 1,      # ❌ bool
         "garden_id": "21"
     },
     "metadata": {
@@ -20,8 +20,8 @@ initial_data = {
     "data": {
         "measurements": [
             {
-                "type": "cock",      # ❌ enum
-                "value": 12,      # ❌ float
+                "type": "go",      # ❌ enum
+                "value": 2,      # ❌ float
                 "timestamp": datetime.utcnow()  # ❌ datetime
             }
         ]

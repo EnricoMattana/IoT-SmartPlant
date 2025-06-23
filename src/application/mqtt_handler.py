@@ -199,11 +199,11 @@ class SmartPlantMQTTHandler:
                 "measurements": plant.get("data", {}).get("measurements", []) + measurements
             }
         }
+        # Formatto la nuova pianta con dr_factory
         updated_plant = dr_factory.update_dr(plant, update_dict)
-
         #  Salva la Digital Replica aggiornata nel database
         db_service.update_dr("plant", plant_id, updated_plant)
-        logger.info(f"Batch of {len(measurements)} measurements added to plant {plant_id}")
+        logger.info(f"Insieme di {len(measurements)} misure aggiunte alla pianta {plant_id}")
 
         # Trova l'ultima misura di umidità e di luce per la pianta
         last_humidity = None
@@ -224,11 +224,6 @@ class SmartPlantMQTTHandler:
             handle_measurement(plant_id, last_light, updated_plant)
                     
         
-        
-        
-
-
-
     def publish(self, topic: str, payload: str, qos: int = 0, retain: bool = False):
         """
         Publish an MQTT message to a specific topic.

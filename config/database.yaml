@@ -2,8 +2,8 @@ database:
   connection:
     host: "localhost"
     port: 27017
-    username: ""  # Leave empty if no authentication is required
-    password: ""  # Leave empty if no authentication is required
+    username: ""  # Non servono autenticazione
+    password: ""  
   settings:
-    name: "SmartPlant"  # Your database name
+    name: "SmartPlant"  # Nome del database
     auth_source: "admin"

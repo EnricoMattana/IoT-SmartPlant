@@ -4,6 +4,7 @@ from pydantic import BaseModel, create_model, Field, field_validator
 import yaml
 import uuid
 
+
 class DRFactory:
     def __init__(self, schema_path: str):
         self.schema = self._load_schema(schema_path)
@@ -31,6 +32,7 @@ class DRFactory:
 
         field_definitions = {}
         profile_fields = self.schema["schemas"]["common_fields"].get("profile", {})
+
         for field_name, field_type in profile_fields.items():
             is_required = field_name in mandatory_fields
             constraints = {}
@@ -52,10 +54,7 @@ class DRFactory:
                         else (
                             float
                             if field_type == "float"
-                            else datetime if field_type == "datetime" else (
-                                bool 
-                                if field_type=="bool" else Any
-                            )
+                            else datetime if field_type == "datetime" else Any
                         )
                     )
                 ),
@@ -82,18 +81,15 @@ class DRFactory:
 
         return model
 
-    def _create_data_model(self) -> type[BaseModel]:
-        """Create Pydantic model for data section"""
+    def _create_data_model(self) -> Type[BaseModel]:
+        """Create Pydantic model for data section with working validators"""
         type_constraints = (
             self.schema["schemas"].get("validations", {}).get("type_constraints", {})
         )
-
         data_fields = self.schema["schemas"].get("entity", {}).get("data", {})
+
         field_definitions = {}
-        validators = {}
-
         for field_name, field_type in data_fields.items():
-
             if field_type == "List[Dict]":
                 field_definitions[field_name] = (
                     List[Dict[str, Any]],
@@ -106,30 +102,37 @@ class DRFactory:
                     (
                         str
                         if field_type == "str"
-                        else int
-                        if field_type == "int"
-                        else float
-                        if field_type == "float"
-                        else Any
+                        else (
+                            int
+                            if field_type == "int"
+                            else float if field_type == "float" else Any
+                        )
                     ),
                     Field(None),
                 )
 
-            # ENUM validator
-            if field_name in type_constraints and "enum" in type_constraints[field_name]:
+        # Costruisci dinamicamente i validator
+        validators = {}
+
+        for field_name, field_type in data_fields.items():
+            # Enum validator
+            if (
+                field_name in type_constraints
+                and "enum" in type_constraints[field_name]
+            ):
                 enum_values = type_constraints[field_name]["enum"]
 
                 def make_enum_validator(field_name, enum_values):
                     @field_validator(field_name, mode="before")
-                    def enum_validator(cls, value):
+                    def validate_enum(cls, value):
                         if value not in enum_values:
                             raise ValueError(f"{field_name} must be one of {enum_values}")
                         return value
-                    return enum_validator
+                    return validate_enum
 
                 validators[f"validate_{field_name}"] = make_enum_validator(field_name, enum_values)
 
-            # LIST[DICT] validator
+            # List[Dict] validator
             if field_type == "List[Dict]" and field_name in type_constraints:
                 rules = type_constraints[field_name]
                 if "item_constraints" in rules:
@@ -140,48 +143,49 @@ class DRFactory:
                     def make_list_validator(field_name, required_fields, type_mappings):
                         @field_validator(field_name, mode="before")
                         def validate_list_items(cls, value):
-
                             if not isinstance(value, list):
                                 raise ValueError(f"{field_name} must be a list")
 
                             for idx, item in enumerate(value):
                                 if not isinstance(item, dict):
-                                    raise ValueError(f"Item {idx} in {field_name} must be a dictionary")
+                                    raise ValueError(f"Item {idx} in {field_name} must be a dict")
 
                                 missing = [f for f in required_fields if f not in item]
                                 if missing:
-                                    raise ValueError(f"Missing required fields {missing} in item {idx}")
+                                    raise ValueError(f"Missing fields {missing} in item {idx}")
 
                                 for key, expected_type in type_mappings.items():
                                     if key in item:
                                         val = item[key]
-                                        if expected_type == "datetime":
-                                            if not isinstance(val, (datetime, str)):
-                                                raise ValueError(f"Field {key} in item {idx} must be a datetime")
-                                        elif expected_type == "float":
-                                            try:
-                                                item[key] = float(val)
-                                            except Exception:
-                                                raise ValueError(f"Field {key} in item {idx} must be a number")
+                                        try:
+                                            if expected_type == "datetime":
+                                                datetime.fromisoformat(str(val))
+                                            elif expected_type == "float":
+                                                float(val)
+                                            elif expected_type == "str":
+                                                str(val)
+                                        except Exception:
+                                            raise ValueError(f"{key} in item {idx} is not valid {expected_type}")
                             return value
                         return validate_list_items
 
-                    validators[f"validate_{field_name}"] = make_list_validator(
-                        field_name, required_fields, type_mappings
-                    )
+                    validators[f"validate_{field_name}"] = make_list_validator(field_name, required_fields, type_mappings)
 
-        # ✅ Create the model with validators
-        model = create_model("Data", **field_definitions, __validators__=validators)
-        model.model_rebuild()
-        return model
+        # Costruzione finale del modello Pydantic dinamico
+        DataModel = type("Data", (BaseModel,), {
+            "__annotations__": {k: v[0] for k, v in field_definitions.items()},
+            **{k: v for k, (_, v) in field_definitions.items()},
+            **validators
+        })
 
+        return DataModel
 
     def create_dr(self, dr_type: str, initial_data: Dict[str, Any]) -> Dict:
         """Create a new Digital Replica instance"""
         # Create Pydantic models for sections
         ProfileModel = self._create_profile_model()
         DataModel = self._create_data_model()
-        print("[DEBUG] Loaded schema keys:", self.schema.keys())
+
         # Initialize with required fields and defaults
         dr_dict = {
             "_id": str(uuid.uuid4()),  # Usiamo _id per MongoDB
@@ -206,9 +210,6 @@ class DRFactory:
                 "devices",
                 "medications",
                 "measurements",
-                "last_login",
-                "owned_plants",
-                "owned_gardens"
             ]:
                 # Questi campi vanno dentro data
                 dr_dict["data"][section] = defaults

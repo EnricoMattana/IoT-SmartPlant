@@ -10,9 +10,11 @@ import src.application.telegram.handlers.library as lib
 
 
 def is_authenticated(telegram_id: int):
+    '''Semplice funzione per vedere se l'utente è loggato'''
     return telegram_id in lib.logged_users
 
 def get_logged_user(telegram_id: int):
+    ''' Associa L'ID utente del database al telegram ID dell'utente'''
     if telegram_id not in lib.logged_users:
         return None
     user_id = lib.logged_users[telegram_id]
@@ -21,34 +23,44 @@ def get_logged_user(telegram_id: int):
 
 
 async def login_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    '''Handler di login'''
     try:
+        # Estrae il telegram_id dalla conversazione telegram
         telegram_id = update.effective_user.id
+
+        # Check che l'utente non sia già loggato
         if get_logged_user(telegram_id) is not None:
-            await update.message.reply_text("Associated to your telegram ID there's already an open session ")
-            return
-        
+            await update.message.reply_text("Associata al tuo Telegram ID è già presente una sessione aperta!")
+            return  
+        # Check sulla consistenza del comando
         if len(context.args) != 2:
-            await update.message.reply_text("Usage: /login <username> <password>")
+            await update.message.reply_text("Utilizzo: /login <username> <password>")
             return
 
         username = context.args[0]
         password = context.args[1]
 
+        # Estrazinoe delle informazioni dell'utente dal database.
         db = current_app.config['DB_SERVICE']
         users = db.query_drs("user", {"profile.username": username})
         if not users:
-            await update.message.reply_text("❌ User not found")
+            await update.message.reply_text("❌ Utente non trovato!")
             return
 
+        # Di default returna una lista
         user = users[0]
+
+        # Si controlla se la password è corretta
         if not check_password_hash(user['profile']['password'], password):
-            await update.message.reply_text("❌ Invalid password")
+            await update.message.reply_text("❌ Password invalida!")
             return
 
+        # Estrazione dell'ID
         user_id = user['_id']
         
         lib.logged_users[telegram_id] = user_id
 
+        # Aggiornamento info utente
         dr_factory = DRFactory("src/virtualization/templates/user.yaml")
         updated_user = dr_factory.update_dr(user, {
             "profile": {"telegram_id": telegram_id},
@@ -58,37 +70,40 @@ async def login_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         db.update_dr("user", user_id, updated_user)
 
-        await update.message.reply_text(f"✅ Logged in as {username}\nYou own {len(user['data'].get('owned_plants', []))} plants.")
+        await update.message.reply_text(f"✅ Ti sei loggato come {username}\n Attualmente possiedi {len(user['data'].get('owned_plants', []))} piante.")
 
     except Exception as e:
-        await update.message.reply_text(f"Login error: {e}")
+        await update.message.reply_text(f"Errore: {e}")
 
 
 async def logout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    '''Handler di logout'''
     telegram_id = update.effective_user.id
     if telegram_id in lib.logged_users:
         del lib.logged_users[telegram_id]
-        await update.message.reply_text("🔒 You have been logged out.")
+        await update.message.reply_text("🔒 Hai effettuato il logout con successo.")
     else:
-        await update.message.reply_text("ℹ️ You were not logged in.")
+        await update.message.reply_text("ℹ️ Non eri loggato.")
 
 
 async def register_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    '''Handler di Registrazione'''
     try:
+        # Check sulla consistenza del progetto
         if len(context.args) != 2:
-            await update.message.reply_text("Usage: /register <username> <password>")
+            await update.message.reply_text("Utilizzo: /register <username> <password>")
             return
-
+        
         username = context.args[0]
         password = context.args[1]
-
+        # Verifichiamo che nessun utente abbia già l'username
         db = current_app.config['DB_SERVICE']
         dr_factory_user=current_app.config['DR_FACTORY_USER']
         users = db.query_drs("user", {"profile.username": username})
         if users:
-            await update.message.reply_text("❌ Username already taken")
+            await update.message.reply_text("❌ Username non disponibile! ")
             return
-
+        # Creiamo il documento utente nel DB
         new_user = dr_factory_user.create_dr("user", {
             "profile": {
                 "username": username,
@@ -96,72 +111,8 @@ async def register_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
         })
         db.save_dr("user", new_user)
-        await update.message.reply_text(f"✅ Registered successfully as {username}. Now you can /login")
+        await update.message.reply_text(f"✅ Registrato con username: {username}. Adesso puoi effettuare il /login")
 
     except Exception as e:
-        await update.message.reply_text(f"Registration error: {e}")
+        await update.message.reply_text(f" Errore: {e}")
 
-
-'''
-async def create_plant_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        telegram_id = update.effective_user.id
-
-        if not is_authenticated(telegram_id):
-            await update.message.reply_text("❌ Devi prima fare il login con /login <username> <password>.")
-            return
-
-        if len(context.args) != 3:
-            await update.message.reply_text("Usage: /create_plant <plant_id> <plant_name> <indoor|outdoor>")
-            return
-
-        plant_id = context.args[0]
-        plant_name = context.args[1]
-        location_type = context.args[2].strip().lower()
-
-        if location_type not in ["indoor", "outdoor"]:
-            await update.message.reply_text("⚠️ The third argument must be either 'indoor' or 'outdoor'.")
-            return
-
-        is_outdoor = location_type == "outdoor"
-
-        db = current_app.config['DB_SERVICE']
-        dr_factory = DRFactory("src/virtualization/templates/plant.yaml")
-
-        if db.get_dr("plant", plant_id):
-            await update.message.reply_text("⚠️ Questa pianta è già registrata.")
-            return
-
-        user = get_logged_user(telegram_id)
-        if user is None:
-            await update.message.reply_text("Errore interno: utente non trovato.")
-            return
-
-        new_plant = dr_factory.create_dr("plant", {
-            "profile": {
-                "name": plant_name,
-                "owner_id": lib.logged_users[telegram_id],
-                "description": "",
-                "species": "unknown",
-                "location": location_type,
-                "outdoor": is_outdoor
-            },
-            "metadata": {},
-            "data": {}
-        })
-
-        new_plant["_id"] = plant_id
-        db.save_dr("plant", new_plant)
-
-        user["data"]["owned_plants"].append(plant_id)
-        db.update_dr("user", user["_id"], user)
-
-        await update.message.reply_text(
-            f"✅ Pianta *{plant_name}* (ID: `{plant_id}`) registrata e collegata al tuo profilo 🌿",
-            parse_mode="Markdown"
-        )
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ Errore durante la creazione della pianta: {str(e)}")
-
-'''

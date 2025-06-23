@@ -1,20 +1,20 @@
 schemas:
   common_fields:
-    _id: str
+    _id: str  # ID dell'utente nel database
     type: str
     profile:
-      username: str
-      password: str
-      telegram_id: int
+      username: str # username dell'utente
+      password: str # password dell'utente
+      telegram_id: int  # telegram_id dell'ultimo accesso
     metadata:
       created_at: datetime
       updated_at: datetime
       status: str
   entity:
     data:
-      owned_gardens: List[dict]
-      owned_plants: List[str]
-      last_login: datetime
+      owned_gardens: List[Dict] # Lista dei giardini posseduti associa Garden ID - Nome Giardino
+      owned_plants: List[str]   # Lista dei nomi delle piante possedute
+      last_login: datetime      # Ultimo login
 
   validations:
     mandatory_fields:
@@ -30,7 +30,7 @@ schemas:
         - status
 
     type_constraints:
-      username:
+      username:   
         type: str
       password:
         type: str
@@ -39,13 +39,12 @@ schemas:
       status:
         type: str
         enum: ["active", "inactive", "suspended"]
-      owned_gardens:
-        type: List[dict]
       owned_plants:
         type: List[str]
       last_login:
         type: datetime
-    
+      owned_gardens:  
+        type: List[Dict]
     initialization:
       metadata:
         status: "active"

@@ -1,28 +1,28 @@
 schemas:
   common_fields:
-    _id: str
-    type: str
+    _id: str  # ID della Digital Replica (DR)
+    type: str # Tipo della DR (Pianta)
     profile:
-      name: str
-      owner_id: str
-      garden_id: str
-      description: str
-      preset: str
-      outdoor: bool
-      location: str
-      auto_watering: bool
+      name: str # Nome della pianta, scelto dall'utente
+      owner_id: str #ID del possessore
+      garden_id: str # ID del giardino in cui è situata
+      description: str # Breve descrizione
+      preset: str # Variabile per adattare la cura della pianta in base a modelli pre-impostati, i.e. pianta grassa, pianta fragile...
+      outdoor: bool # Flag per pianta outdoor
+      location: str # Area geografica della pianta
+      auto_watering: bool # Irrigazione automatica 
     metadata:
-      created_at: datetime
-      updated_at: datetime
-      status: str
-      management_info: Dict
+      created_at: datetime  # Quando la DR è stata creata
+      updated_at: datetime  # Quando è stata aggiornata l'ultima volta
+      status: str # Stato della DR
+      management_info: Dict # Informazioni per il management della pianta
 
   entity:
     data:
-      measurements: List[Dict]
+      measurements: List[Dict]   #Lista delle misure
 
   validations:
-    mandatory_fields:
+    mandatory_fields: # Campi che DEVONO sempre essere presenti
       root:
         - _id
         - type
@@ -36,14 +36,15 @@ schemas:
       metadata:
         - created_at
         - updated_at
-    type_constraints:
+        - management_info
+    type_constraints:   # Vincoli sui tipi di dati
       _id:
         type: str
       type:
         type: str
       preset:
         type: str
-        enum: ["1", "2", "3"]
+        enum: ["1", "2", "3"] # Per ora si supportano solo 3 preset!
       name:
         type: str
       owner_id:
@@ -58,6 +59,8 @@ schemas:
         type: bool
       garden_id:
         type: str
+      management_info:
+        type: Dict
       measurements:
         type: List[Dict]
         item_constraints:
@@ -72,15 +75,15 @@ schemas:
         preset: "2"
       metadata:
         status: "active"
-        management_info:
-          last_forecast: null
-          skip_pred: False
-          disable_aw: False
-          sunrise_h: null
-          sunset_h: null
-          Sunny: True
-          last_warning_ts_h: null
-          last_warning_ts_l: null
+        management_info:  # Management info è un semplice privato dizionario che viene gestito interamente dal backend
+          last_forecast: null # Ultima volta che è stata richiesta una previsione meteo
+          skip_pred: False  # Flag per ignorare la prossima previsione meteo
+          disable_aw: False # Flag per bloccare l'irrigazione automatica se è prevista pioggia
+          sunrise_h: null # Orario (locale) alba
+          sunset_h: null  # Orario (locale) tramonto
+          Sunny: True # Nuvolosità
+          last_warning_ts_h: null # Ultima notifica umidità
+          last_warning_ts_l: null # Ultima notifica luce
           pending_actions: []
       data:
         measurements: []
