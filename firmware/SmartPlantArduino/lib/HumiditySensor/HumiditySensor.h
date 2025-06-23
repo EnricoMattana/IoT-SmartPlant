@@ -3,7 +3,7 @@
 
 #include <Arduino.h>
 
-static const uint16_t DRY_DEFAULT = 785;
+static const uint16_t DRY_DEFAULT = 786;
 static const uint16_t WET_DEFAULT = 384;
 
 class HumiditySensor {
@@ -12,10 +12,10 @@ class HumiditySensor {
 
     void begin();               // Inizializza e carica calibrazione
     uint16_t readRaw();         // Valore ADC grezzo
-    float readPercent();        // 0-100 %
+    float readPercent();        // umidità percentuale
     void calibrateDry();        // Fondoscala “secco”
     void calibrateWet();        // Fondoscala “bagnato”
-    void resetCalibration();    // Invalida calibrazione
+    void resetCalibration();    
     uint16_t getDry();   // restituisce il valore di fondo scala secco
     uint16_t getWet();   // restituisce il valore di fondo scala bagnato
 

@@ -2,29 +2,27 @@
 #include <ArduinoJson.h>
 #include <time.h>
 
-// --- parse() ---
 bool PlantTelemetry::parse(const String& input) {
-    StaticJsonDocument<64> doc;              // 64 B bastano per {"humidity":x,"light":y}
+    StaticJsonDocument<64> doc;              // Buffer per il parsing di piccoli JSON
     DeserializationError err = deserializeJson(doc, input);
-    if (err) return false;
+    if (err) return false;      // Se c’è un errore, non procede oltre
     if (!doc.containsKey("humidity") || !doc.containsKey("light")) return false;
     humidity = doc["humidity"].as<float>();
     light    = doc["light"].as<float>();
     return true;
 }
 
-// --- timestamp ISO8601 ---
 String PlantTelemetry::getTimestamp() const {
     time_t now = time(nullptr);
     struct tm* t = gmtime(&now);
     char buf[25];
+    // Esempio di formato: 2025-06-23T15:23:01Z
     strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", t);
     return String(buf);
 }
 
-// --- buildPayload() ---
 String PlantTelemetry::buildPayload() {
-    StaticJsonDocument<256> doc;             // 256 B per 2 oggetti JSON
+    StaticJsonDocument<256> doc;             // Buffer per contenere l’array di oggetti JSON
     JsonArray arr = doc.to<JsonArray>();
 
     JsonObject h = arr.createNestedObject();

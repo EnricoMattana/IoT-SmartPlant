@@ -1,58 +1,64 @@
-#include <Arduino.h>
-#include <ESP8266WiFi.h>
-#include <WiFiClientSecure.h>
-#include <WiFiManager.h>
+#include <Arduino.h>           // Libreria di base Arduino
+#include <ESP8266WiFi.h>       // Gestione Wi-Fi per il NodeMCU ESP8266
+#include <WiFiClientSecure.h>  
+#include <WiFiManager.h>       // Interfaccia utente per configurazione Wi-Fi
 #define MQTT_MAX_PACKET_SIZE 1024
-#include <PubSubClient.h>
-#include <SoftwareSerial.h>
-#include <LittleFS.h>
-#include "PlantTelemetry.h"
-#include <time.h>
+#include <PubSubClient.h>      // Libreria MQTT
+#include <SoftwareSerial.h>    // Porta seriale software (usata per comunicare con Arduino)
+#include <LittleFS.h>          // File system interno all’ESP8266
+#include "PlantTelemetry.h"    // Classe per decodificare messaggi telemetrici dal firmware Arduino
+#include <time.h>              // Funzioni e strutture per gestione ora e data (NTP)
 
-// ——————— FIFO / batch ———————
-constexpr uint8_t  FIFO_LEN = 6;
-constexpr uint32_t T_UPLOAD = 60 * 1000;  // 1 min per test
+// Impostazioni per FIFO: archiviazione di un certo numero di campioni prima di spedirli
+constexpr uint8_t  FIFO_LEN = 6;          // Dimensione massima del buffer
+constexpr uint32_t T_UPLOAD = 60 * 1000;  // Invio batch ogni 60 secondi
 
-// ─── forward declarations ───
-void enqueueSample(float hum, float light, const String& ts);
+// Dichiarazioni di funzione
+void enqueueSample(float hum, float light, const String& ts); 
 void publishFIFO();
 
+// Struttura dati per un singolo campione
 struct Sample {
-  float   humidity;
-  float   light;
-  String  timestamp;
+  float   humidity;   // Umidità letta
+  float   light;      // Luminosità letta
+  String  timestamp;  // Timestamp relativo al campione
 };
 
+// Array circolare per memorizzare i campioni
 Sample   fifo[FIFO_LEN];
-uint8_t  fifoHead   = 0;
-uint8_t  fifoCount  = 0;
-uint32_t lastUpload = 0;
+uint8_t  fifoHead   = 0;       // Indice successivo in cui salvare
+uint8_t  fifoCount  = 0;       // Numero di elementi nella FIFO
+uint32_t lastUpload = 0;       // Tempo dell’ultimo invio batch
 
-// ———— MQTT topic globals ————
+// Variabili globali per definire i topic MQTT (inviati e ricevuti)
 String mqttTopicOut;
 String mqttTopicIn;
 String mqttTopicBatch;
-String mqttTopicErr;    // ← dichiarazione globale
+String mqttTopicErr;  //Topic per eventuali errori
 
 #ifndef RESET_BTN_PIN
-#define RESET_BTN_PIN D4 // D0 on NodeMCU
+#define RESET_BTN_PIN D4 // Pin per resettare la configurazione Wi-Fi
 #endif
 
+// Porta seriale software collegata ad Arduino
 constexpr uint8_t RX_PIN = D2, TX_PIN = D3;
 SoftwareSerial softSerial(RX_PIN, TX_PIN);
 
+// Parametri connessione MQTT (broker, porta, credenziali)
 const char* MQTT_BROKER = "2cf8c9d8d17f48c3a7c23442276b3ce4.s1.eu.hivemq.cloud";
 const uint16_t MQTT_PORT = 8883;
 const char* MQTT_USER   = "smartplant-users";
 const char* MQTT_PASS   = "IoTPlant2025";
 
+// Oggetti per la connessione Wi-Fi e MQTT
 WiFiClientSecure net;
 PubSubClient mqtt(net);
-WiFiManager wm;
-PlantTelemetry telemetry;
-String plantId;
+WiFiManager wm;         // Gestione user-friendly delle credenziali Wi-Fi
+PlantTelemetry telemetry; 
+String plantId;         // ID pianta letto/salvato su LittleFS
 
-// —————— LittleFS helpers ——————
+// —————— Funzioni LittleFS ——————
+// Legge l’ID pianta dal file system interno (se presente)
 String readPlantId() {
   if (!LittleFS.exists("/plant_id.txt")) return "";
   File f = LittleFS.open("/plant_id.txt", "r");
@@ -61,6 +67,8 @@ String readPlantId() {
   id.trim();
   return id;
 }
+
+// Scrive il plant id solo nel caso non sia già presente
 void writePlantId(const String& id) {
   if (readPlantId().length()) return;
   File f = LittleFS.open("/plant_id.txt", "w");
@@ -68,124 +76,138 @@ void writePlantId(const String& id) {
   f.close();
 }
 
-// ————— reset Wi-Fi —————
+//Funzione per resettare le credenziali Wi-Fi, usata se il pulsante è premuto
 void resetCredentials() {
-  Serial.println(F("⚠️  Reset Wi-Fi credenziali"));
-  wm.resetSettings();
-  ESP.restart();
+  // Serial.println(F("Reset Wi-Fi credenziali"));
+  wm.resetSettings();  // Elimina le impostazioni salvate
+  ESP.restart();       // Riavvia il modulo
 }
 
-// ————— MQTT reconnect —————
+//Funzione per riconnettersi al broker MQTT
 void mqttReconnect() {
   static uint32_t lastTry = 0;
-  if (mqtt.connected()) return;
-  if (millis() - lastTry < 5000) return;
+  if (mqtt.connected()) return;             // Se già connesso, non fare nulla
+  if (millis() - lastTry < 5000) return;    // Evita loop infiniti di riconnessione
   lastTry = millis();
-  Serial.println(F("🔄 MQTT reconnect attempt..."));
+
+  // Serial.println(F("MQTT reconnect attempt..."));
   if (mqtt.connect("SmartPlantNode", MQTT_USER, MQTT_PASS)) {
-    Serial.println(F("✅ MQTT connected"));
-    mqtt.subscribe(mqttTopicIn.c_str());
-    Serial.print(F("📡 Subscribed to: "));
-    Serial.println(mqttTopicIn);
+    // Se la connessione va a buon fine
+    // Serial.println(F("MQTT connected"));
+    mqtt.subscribe(mqttTopicIn.c_str());    // Iscrizione al topic di input
+    // Serial.print(F("Subscribed to: "));
+    // Serial.println(mqttTopicIn);
   } else {
-    Serial.print(F("❌ MQTT connect failed, rc="));
-    Serial.println(mqtt.state());
+    // Se la connessione fallisce
+    // Serial.print(F("MQTT connect failed, rc="));
+    // Serial.println(mqtt.state());
   }
 }
 
-// ————— MQTT callback —————
+// Callback quando arriva un pacchetto MQTT
 void callback(char* topic, byte* payload, unsigned int len) {
+  // Ricostruisce il messaggio in una String
   String msg;
-  for (unsigned int i = 0; i < len; ++i) msg += (char)payload[i];
+  for (unsigned int i = 0; i < len; ++i) {
+    msg += (char)payload[i];
+  }
   msg.trim();
-  Serial.printf("📥 MQTT-IN  %s → %s\n", topic, msg.c_str());
+  // Serial.printf("MQTT-IN  %s → %s\n", topic, msg.c_str());
 
-  // 1) JSON commands
+  // 1) Se il payload è JSON ed esiste la chiave "cmd"
   StaticJsonDocument<64> doc;
   if (deserializeJson(doc, msg) == DeserializationError::Ok && doc.containsKey("cmd")) {
     const char* cmd = doc["cmd"];
+    // Comando "send_now"
     if (strcmp(cmd, "send_now") == 0) {
-      Serial.println(F("⏩ CMD send_now (JSON): invio ultimissime misure"));
-      publishFIFO();
+      // Serial.println(F("CMD send_now (JSON): invio ultime misure"));
+      publishFIFO(); 
       return;
     }
+    // Comando "water" con durata
     if (strcmp(cmd, "water") == 0) {
       int dur = doc["duration"] | 15000;
-      Serial.print(F("🚿 CMD water: durata "));
-      Serial.print(dur);
-      Serial.println(F(" ms"));
+      // Serial.print(F("CMD water: durata "));
+      // Serial.print(dur);
+      // Serial.println(F(" ms"));
+      // Invio comando ad Arduino di innaffiatura
       softSerial.println("water:" + String(dur));
       return;
     }
+    // Comandi di calibrazione "calDry" / "calWet"
     if (strcmp(cmd, "calDry") == 0 || strcmp(cmd, "calWet") == 0) {
-      Serial.printf("🔧 CMD %s\n", cmd);
+      // Serial.printf("CMD %s\n", cmd);
+      // Inoltro comando ad Arduino per calibrazione
       softSerial.println(cmd);
       return;
     }
   }
 
-  // 2) Plain-text send_now
-  if (msg == "send_now") {
-    Serial.println(F("⏩ CMD send_now (plain): invio ultimissime misure"));
+  // 2) Se il messaggio plain-text è "send_now"
+  if (msg == "send_now") { // Comando invio istantaneo del batch
+    // Serial.println(F("CMD send_now (plain): invio ultimissime misure"));
     publishFIFO();
     return;
   }
 
-  // 3) Fallback → Arduino
-  Serial.println(F("📤 Forward plain-text to Arduino"));
   softSerial.println(msg);
 }
 
+// Sincronizzazione oraria via NTP 
 void setupNTP() {
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-  Serial.print(F("⏱ NTP sync..."));
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");  // Impostazione server NTP
+  // Serial.print(F("NTP sync..."));
   while (time(nullptr) < 1700000000) {
-    Serial.print(F("."));
+    // Serial.print(F("."));
     delay(500);
   }
-  Serial.println(F(" done"));
+  // Serial.println(F(" done"));
 }
 
 void setup() {
+  Serial.begin(9600);          // Porta seriale hardware
+  softSerial.begin(9600);      // Porta seriale software per comunicare con Arduino
+  // Serial.println(F("\nSmartPlant NodeMCU boot"));
 
+  pinMode(D7, INPUT_PULLUP);   // Pulsante reset Wi-Fi se necessario
 
-  Serial.begin(9600);
-  softSerial.begin(9600);
-  Serial.println(F("\n🌱 SmartPlant NodeMCU boot"));
-    pinMode(D7, INPUT_PULLUP);
+  // Inizializza il file system LittleFS
   if (!LittleFS.begin()) {
-    Serial.println(F("❌ LittleFS init failed"));
+    // Serial.println(F("LittleFS init failed"));
     while (1);
   }
 
+  // Configurazione Wi-Fi manager con timeout di 120 secondi
   wm.setTimeout(120);
   if (!wm.autoConnect("SmartPlant-Setup")) {
-    Serial.println(F("❌ Wi-Fi setup fail"));
+    // Serial.println(F("Wi-Fi setup fail"));
     ESP.restart();
-  }
-  Serial.print(F("📶 Wi-Fi SSID: "));
-  Serial.println(WiFi.SSID());
+    }
+  // Serial.println(WiFi.SSID());
 
+  // Sincronizzazione oraria
   setupNTP();
 
   writePlantId("PLANT-9F7C");
   plantId = readPlantId();
-  Serial.print(F("📛 Plant ID: "));
-  Serial.println(plantId);
+  // Serial.print(F("Plant ID: "));
+  // Serial.println(plantId);
 
-  // Costruzione topics
+  // Costruisci i topic MQTT
   mqttTopicErr   = "smartplant/" + plantId + "/errors";
   mqttTopicIn    = "smartplant/" + plantId + "/commands";
   mqttTopicBatch = "smartplant/" + plantId + "/measurement";
   lastUpload     = millis();
 
-  Serial.print(F("⚠️  Errors topic: "));
+  /* 
+  Serial.print(F("Errors topic: "));
   Serial.println(mqttTopicErr);
-  Serial.print(F("📥 Topic in:  "));
+  Serial.print(F("Topic in:  "));
   Serial.println(mqttTopicIn);
-  Serial.print(F("📦 Batch topic: "));
+  Serial.print(F("Batch topic: "));
   Serial.println(mqttTopicBatch);
-
+  */
+  // Configura connessione sicura
   net.setInsecure();
   mqtt.setServer(MQTT_BROKER, MQTT_PORT);
   mqtt.setBufferSize(1024);
@@ -194,39 +216,44 @@ void setup() {
 }
 
 void loop() {
+  // Tenta di riconnetterci a MQTT se serve
   mqttReconnect();
   mqtt.loop();
+
+  // Se il pulsante su pin D7 viene premuto, resetta Wi-Fi
   if (digitalRead(D7) == HIGH) {
-    Serial.println(F("🔄 Reset Wi-Fi credentials"));
-    delay(50);  // debounce
+    // Serial.println(F("Reset Wi-Fi credentials"));
+    delay(50);  
     if (digitalRead(D7) == HIGH) {
       resetCredentials();
     }
   }
-  // Auto-send batch
+
+  // Se è ora di inviare un batch (superato T_UPLOAD)
   if (millis() - lastUpload >= T_UPLOAD) {
-    Serial.println(F("⏰ Batch timeout reached"));
+    // Serial.println(F("Batch timeout reached"));
     publishFIFO();
   }
 
-  // Read from Arduino
+  // Controlla se sono arrivati dati dalla seriale software (Arduino)
   if (softSerial.available()) {
     String raw = softSerial.readStringUntil('\n');
     raw.trim();
 
-    // Telemetria JSON
+    // Tenta di fare parsing dei dati come telemetria JSON
     if (raw.length() && telemetry.parse(raw)) {
       float h = telemetry.getHumidity();
       float l = telemetry.getLight();
       String ts = telemetry.getTimestamp();
-      Serial.printf("🔢 New sample: H=%.1f L=%.1f @%s\n", h, l, ts.c_str());
+      // Serial.printf("New sample: H=%.1f L=%.1f @%s\n", h, l, ts.c_str());
       enqueueSample(h, l, ts);
     }
-    // Errori / OK da Arduino
+    // Se inizia con "err:" lo consideriamo un messaggio di errore da Arduino
     else if (raw.startsWith("err:")) {
       StaticJsonDocument<128> doc;
-      
       doc["level"] = "error";
+
+      // Estrae codice e valore dall’errore
       int p1 = raw.indexOf(':');
       int p2 = raw.indexOf(':', p1 + 1);
       String code = raw.substring(p1 + 1, p2 == -1 ? raw.length() : p2);
@@ -239,12 +266,12 @@ void loop() {
       String payload;
       serializeJson(doc, payload);
 
-      // Pubblica errore (QoS 0, retain=false)
+      // Pubblica l’errore sul topic dedicato
       bool ok = mqtt.publish(
         mqttTopicErr.c_str(),
         (const uint8_t*)payload.c_str(),
         payload.length(),
-        /*retain=*/false
+        false
       );
       Serial.print(F("⚠️  Publish ERR → "));
       Serial.println(ok ? F("OK") : F("FAIL"));
@@ -252,31 +279,33 @@ void loop() {
   }
 }
 
-// ─── helper functions ───
+// Enqueue: aggiunge un campione al FIFO circolare
 void enqueueSample(float hum, float light, const String& ts) {
   fifo[fifoHead] = {hum, light, ts};
   fifoHead = (fifoHead + 1) % FIFO_LEN;
   if (fifoCount < FIFO_LEN) {
     fifoCount++;
-    Serial.printf("   FIFO count: %u/%u\n", fifoCount, FIFO_LEN);
-    // alla prima volta che fifoCount diventa uguale a FIFO_LEN,
-    // mando subito il burst:
+    // Serial.printf("FIFO count: %u/%u\n", fifoCount, FIFO_LEN);
+    // Se la FIFO arriva a dimensione massima, invio immediato
     if (fifoCount == FIFO_LEN) {
-      Serial.println(F("🎯 FIFO piena, invio burst immediato"));
+      // Serial.println(F("FIFO piena, invio burst immediato"));
       publishFIFO();
     }
   } else {
-    // buffer già pieno, semplicemente sovrascrivo
-    Serial.printf("   FIFO count: %u/%u (sovrascrittura)\n", fifoCount, FIFO_LEN);
+    // Se già pieno, sovrascrive i campioni meno recenti
+    // Serial.printf("   FIFO count: %u/%u (sovrascrittura)\n", fifoCount, FIFO_LEN);
   }
 }
 
+// publishFIFO: invia via MQTT tutti i campioni raccolti, quindi resetta buffer
 void publishFIFO() {
   if (fifoCount == 0) {
-    Serial.println(F("⚠️  FIFO empty, nothing to send"));
+    // Serial.println(F("FIFO empty, nothing to send"));
     return;
   }
-  Serial.printf("📊 Sending batch of %u samples\n", fifoCount);
+  // Serial.printf("Sending batch of %u samples\n", fifoCount);
+
+  // Crea un array JSON con coppie di misure (umidità e luce)
   StaticJsonDocument<1024> doc;
   JsonArray arr = doc.to<JsonArray>();
   for (uint8_t i = 0; i < fifoCount; ++i) {
@@ -290,20 +319,24 @@ void publishFIFO() {
     l["value"]     = fifo[idx].light;
     l["timestamp"] = fifo[idx].timestamp;
   }
+
+  // Converte l’array JSON in stringa
   String payload;
   serializeJson(arr, payload);
   Serial.print(F("   Payload: "));
   Serial.println(payload);
+
+  // Pubblica su MQTT e stampa l’esito
   bool ok = mqtt.publish(mqttTopicBatch.c_str(), payload.c_str(), false);
   Serial.print(F("   mqtt.publish() → "));
   Serial.println(ok ? "OK" : "FAIL");
   if (ok) {
-    fifoCount  = 0;
-    lastUpload = millis();
-    Serial.println(F("✅ Batch published, timer reset"));
+    fifoCount  = 0;                // Svuota la FIFO
+    lastUpload = millis();         // Reset del timer
+    // Serial.println(F("Batch published, timer reset"));
   } else {
-    Serial.print(F("❌ Publish failed, rc="));
-    Serial.println(mqtt.state());
+    // Serial.print(F("Publish failed, rc="));
+    // Serial.println(mqtt.state());
   }
 
 }
