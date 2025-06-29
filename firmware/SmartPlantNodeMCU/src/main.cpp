@@ -106,51 +106,22 @@ void mqttReconnect() {
 
 // Callback quando arriva un pacchetto MQTT
 void callback(char* topic, byte* payload, unsigned int len) {
-  // Ricostruisce il messaggio in una String
   String msg;
-  for (unsigned int i = 0; i < len; ++i) {
-    msg += (char)payload[i];
-  }
+  for (unsigned int i = 0; i < len; ++i) msg += (char)payload[i];
   msg.trim();
-  // Serial.printf("MQTT-IN  %s → %s\n", topic, msg.c_str());
+  //Serial.printf("MQTT-IN  %s → %s\n", topic, msg.c_str());
 
-  // 1) Se il payload è JSON ed esiste la chiave "cmd"
-  StaticJsonDocument<64> doc;
-  if (deserializeJson(doc, msg) == DeserializationError::Ok && doc.containsKey("cmd")) {
-    const char* cmd = doc["cmd"];
-    // Comando "send_now"
-    if (strcmp(cmd, "send_now") == 0) {
-      // Serial.println(F("CMD send_now (JSON): invio ultime misure"));
-      publishFIFO(); 
-      return;
-    }
-    // Comando "water" con durata
-    if (strcmp(cmd, "water") == 0) {
-      int dur = doc["duration"] | 15000;
-      // Serial.print(F("CMD water: durata "));
-      // Serial.print(dur);
-      // Serial.println(F(" ms"));
-      // Invio comando ad Arduino di innaffiatura
-      softSerial.println("water:" + String(dur));
-      return;
-    }
-    // Comandi di calibrazione "calDry" / "calWet"
-    if (strcmp(cmd, "calDry") == 0 || strcmp(cmd, "calWet") == 0) {
-      // Serial.printf("CMD %s\n", cmd);
-      // Inoltro comando ad Arduino per calibrazione
-      softSerial.println(cmd);
-      return;
-    }
-  }
-
-  // 2) Se il messaggio plain-text è "send_now"
-  if (msg == "send_now") { // Comando invio istantaneo del batch
-    // Serial.println(F("CMD send_now (plain): invio ultimissime misure"));
+  // 2) Plain-text send_now
+  if (msg == "send_now") {
+    //Serial.println(F("CMD send_now (plain): invio ultimissime misure"));
     publishFIFO();
     return;
   }
-
+  else { 
+  // 3) Fallback → Arduino
+  //Serial.println(F("Forward plain-text to Arduino"));
   softSerial.println(msg);
+  }
 }
 
 // Sincronizzazione oraria via NTP 
